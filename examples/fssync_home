@@ -1,0 +1,56 @@
+#!/usr/bin/python
+import os, stat, sys
+
+def my_filter(root, p, s):
+  if p[-4:] in ('.pyc', '.pyo'):
+    return stat.S_ISREG(s.mode)
+  elif p[-12:] == '/__pycache__':
+    return stat.S_ISDIR(s.mode)
+  try:
+    r, p = p.split('/', 1)
+  except ValueError:
+    if p[:1] == '.':
+      return p in (
+        '.adobe',
+        '.cache', # XDG_CACHE_HOME
+        '.dbus',
+        '.fontconfig',
+        '.fssync.log',
+        '.gconfd',
+        '.ICEauthority',
+        '.java',
+        '.macromedia',
+        '.mcop',
+        '.pulse',
+        '.pulse-cookie',
+        '.python-eggs',
+        '.recently-used',
+        '.rnd',
+        '.Xauthority',
+        '.xsession-errors',
+      ) or p[:12] == '.DCOPserver_' \
+        or p[:13] == '.fonts.cache-'
+    return p == 'dead.letter'
+  else:
+    try:
+      d, b = p.rsplit('/', 1)
+    except ValueError:
+      #if r == 'foo':
+      #  return p == 'bar'
+      pass
+    else:
+      if d[-5:] in ('/.git', '.git'):
+        return b in ('qgit_cache.dat', 'gitk.cache')
+      if r in ('.icedove', '.mozilla'):
+        if '/ImapMail/' in d or '/News/' in d:
+          return b != 'msgFilterRules.dat'
+        elif stat.S_ISDIR(s.mode):
+          return b in ('Cache', 'startupCache')
+        return b in ('urlclassifier3.sqlite', 'XUL.mfasl')
+
+home = os.environ['HOME']
+log = '/.fssync.log'
+sys.argv[1:1] = ('-f', my_filter.__name__, '-X', 'fssync', '-R', 'backup',
+                 '-v', '-l', home + log, '-L', 'backup' + log,
+                 '-d', home + '/.fssync.db', '-r', home)
+execfile('/usr/bin/fssync')

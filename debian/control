@@ -1,0 +1,33 @@
+Source: fssync
+Section: utils
+Priority: extra
+Maintainer: Julien Muchembled <jm@jmuchemb.eu>
+Build-Depends: debhelper (>= 8.0.0), python-docutils
+Standards-Version: 3.9.2
+Homepage: http://jmuchemb.eu/fssync.git
+
+Package: fssync
+Architecture: all
+Depends: python (<< 2.8), python (>= 2.6), python2.7 | python-argparse, python-xattr (>= 0.6.2), python-pylibacl (>= 0.5), openssh-client
+Description: File system synchronization tool (1-way, over SSH)
+ fssync is a 1-way file-synchronization tool that tracks inodes and maintains a
+ local database of files that are on the remote side, making it able to:
+  - handle efficiently a huge number of dirs/files
+  - detect renames/moves and hard-links
+ .
+ It aims at minimizing network traffic and synchronizing every detail of a file
+ system:
+  - all types of inode: file, dir, block/character/fifo, socket, symlink
+  - preserve hard links
+  - modification time, ownership/permission/ACL, extended attributes
+  - sparse files
+ .
+ Other features:
+  - it can be configured to exclude files from synchronization
+  - fssync can be interrupted and resumed at any time, making it tolerant to
+    random failures (e.g. network error)
+  - algorithm to synchronize file content is designed to handle big files
+    like VM images efficiently, by updating fixed-size modified blocks in-place
+ .
+ Main usage of fssync is to prevent data loss in case of hardware failure,
+ where RAID1 is not possible (e.g. in laptops).

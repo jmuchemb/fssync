@@ -1,0 +1,208 @@
+#!/usr/bin/python
+# -*- coding: utf-8 -*-
+#
+# Copyright (C) 2011-2012 Julien Muchembled <jm@jmuchemb.eu>
+#
+# This program is free software: you can redistribute it and/or modify
+# it under the terms of the GNU General Public License version 3 as
+# published by the Free Software Foundation.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program.  If not, see <http://www.gnu.org/licenses/>.
+
+import errno, imp, os, random, shutil, stat, tempfile, unittest
+from collections import defaultdict, deque
+fssync = imp.new_module('fssync')
+execfile(os.path.realpath('fssync'), fssync.__dict__)
+
+# XXX: http://braawi.org/genbackupdata/ (packaged by Debian) may help.
+
+class Stat(fssync.Stat):
+
+  _fake_ino = {}
+  _last_ino = 0
+
+  def __init__(self, path):
+    super(Stat, self).__init__(path)
+    try:
+      self.ino = self._fake_ino[path]
+    except KeyError:
+      pass
+
+  @classmethod
+  def set_ino(cls, path, ino=None):
+    if ino is None:
+      # negative number to not conflict with real inodes
+      cls._last_ino = ino = cls._last_ino - 1
+    cls._fake_ino[os.path.realpath(path)] = ino
+    return ino
+
+  @classmethod
+  def reset_ino(cls):
+    cls._fake_ino.clear()
+    cls._last_ino = 0
+
+fssync.Stat = Stat
+
+
+class DummyRpcClient(object):
+
+  def __init__(self, remote):
+    self.remote = remote
+    self._rpc = deque()
+    self.called = defaultdict(int)
+
+  def wait(self):
+    name, args, kw = self._rpc.popleft()
+    self.called[name] += 1
+    if isinstance(args[0], basestring):
+      args = (os.path.join(self.remote.root, args[0]),) + args[1:]
+    return getattr(self.remote, name)(*args, **kw)
+
+  def __getattr__(self, name):
+    append = self._rpc.append
+    f = lambda *args, **kw: append((name, args, kw))
+    setattr(self, name, f)
+    return f
+
+
+class Local(fssync.Local):
+
+  def __init__(self):
+    super(Local, self).__init__(tempfile.mkdtemp(), ':memory:',
+                                DummyRpcClient(Remote()))
+
+  def __del__(self):
+    shutil.rmtree(self.root)
+    super(Local, self).__del__()
+    Stat.reset_ino()
+
+  @property
+  def remote(self):
+    return self.rpc.remote
+
+
+class DummyPwdGrp(object):
+
+  def __getitem__(self, id):
+    return id
+
+
+class Remote(fssync.Remote):
+
+  _pwd = _grp = DummyPwdGrp()
+
+  def __init__(self):
+    super(Remote, self).__init__(tempfile.mkdtemp())
+
+  def __del__(self):
+    shutil.rmtree(self.root)
+
+
+def gen_data(size, __blob=''.join(chr(int(random.gauss(0, .8)) % 256)
+                                  for x in xrange(100000))):
+  i = random.randrange(len(__blob) - size)
+  return __blob[i:i+size]
+
+
+class Test(unittest.TestCase):
+
+  def setUp(self):
+    self.fssync = Local()
+    os.chdir(self.fssync.root)
+
+  def tearDown(self):
+    del self.fssync
+
+  def mknod(self, path, size=None, sparse_map=0, mode=None):
+    if size is None:
+      os.makedirs(path)
+    else:
+      d = os.path.dirname(path)
+      if not os.path.exists(d):
+        os.makedirs(path)
+      with open(path, 'w') as f:
+        f.write(gen_data(size))
+    if mode is not None:
+      os.chmod(path, mode)
+
+  def isSynced(self):
+    isdir = os.path.isdir
+    join = os.path.join
+    dst_root = self.fssync.remote.root
+    for src, names, files in os.walk('.'):
+      dst = dst_root + src[1:]
+      names = set(names).union(files)
+      if names != set(os.listdir(dst)):
+        return False
+      for name in names:
+        src_path = join(src, name)
+        dst_path = join(dst, name)
+        s = Stat(src_path)
+        try:
+          d = Stat(dst_path)
+        except OSError:
+          if e.errno != errno.ENOENT:
+            raise
+          return False
+        if s.value != d.value:
+          return False
+        fmt = stat.S_IFMT(s.mode)
+        if fmt == stat.S_IFLNK:
+          if os.readlink(src_path) != os.readlink(dst_path):
+            return False
+        elif fmt == stat.S_IFREG:
+          with open(src_path) as s:
+            with open(dst_path) as d:
+              if s.read() != d.read():
+                return False
+    return True
+
+  @property
+  def called(self):
+    return self.fssync.rpc.called
+
+  def sync(self, clean=True):
+    self.fssync.sync('')
+    if clean:
+      self.fssync.clean('')
+    self.assertSynced()
+
+  def assertSynced(self, *args, **kw):
+    self.assertTrue(self.isSynced(), *args, **kw)
+
+  def assertNotSynced(self, *args, **kw):
+    self.assertFalse(self.isSynced(), *args, **kw)
+
+  def test1(self):
+    import xml
+    shutil.copytree(os.path.dirname(xml.__file__), 'a', symlinks=True)
+    self.assertNotSynced()
+    self.sync()
+    self.assertEqual(sorted(self.called), ['check_data', 'sync_data',
+                                           'sync_meta', 'truncate'])
+
+    self.called.clear()
+    self.sync()
+    self.assertFalse(self.called)
+
+    os.rename('a', 'b')
+    self.assertNotSynced()
+    self.sync()
+    self.assertEqual(self.called, dict(rename=1, sync_meta=1))
+
+    self.called.clear()
+    os.rename('b', 'c')
+    Stat.set_ino('c')
+    self.sync()
+    self.assertEqual(sorted(self.called), ['link', 'removemany',
+                                           'rename', 'sync_meta'])
+
+
+if __name__ == '__main__':
+  unittest.main()

@@ -1,0 +1,5 @@
+/debian/files
+/debian/fssync.debhelper.log
+/debian/fssync.substvars
+/debian/fssync/
+/fssync.1

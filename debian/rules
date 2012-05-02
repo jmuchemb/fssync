@@ -1,0 +1,20 @@
+#!/usr/bin/make -f
+# -*- makefile -*-
+
+# Uncomment this to turn on verbose mode.
+#export DH_VERBOSE=1
+
+override_dh_auto_clean:
+	rm -f fssync.1
+
+fssync.1: README.rst
+	rst2man $< $@
+
+override_dh_installman: fssync.1
+	dh_installman $<
+
+override_dh_install:
+	dh_install fssync usr/bin
+
+%:
+	dh $@
