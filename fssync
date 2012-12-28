@@ -1,4 +1,4 @@
-#!/usr/bin/python
+#!/usr/bin/python3.3
 # -*- coding: utf-8 -*-
 #
 # Copyright (C) 2011-2012 Julien Muchembled <jm@jmuchemb.eu>
@@ -18,13 +18,10 @@
 import argparse, errno, grp, logging.handlers, os
 import pwd, re, signal, sqlite3, stat, subprocess, sys, syslog
 from contextlib import contextmanager
-from cPickle import Pickler, Unpickler, dumps, loads, HIGHEST_PROTOCOL
-from ctypes import CDLL, util as ctypes_util, get_errno, \
-  Structure, c_long, pointer
+from ctypes import CDLL, util as ctypes_util, get_errno, c_long
 from hashlib import md5
-from math import modf
-from urllib import splitport
-from xattr import xattr, XATTR_NOFOLLOW # BBB: awaiting Python 3.3
+from pickle import Pickler, Unpickler, dumps, loads, HIGHEST_PROTOCOL
+from urllib.parse import splitport
 from posix1e import ACL, delete_default
 
 BLOCK_SIZE = 4096
@@ -54,23 +51,13 @@ def check_data(f, size, block_size):
     yield md5(d).digest()
     size -= n
 
-libc = CDLL(ctypes_util.find_library('c'), use_errno=True)
-def _lutimensat():
-  # BBB: os.utimensat is new to Python 3.3
-  libc_utimensat = libc.utimensat
-  class timespec(Structure):
-    _fields_ = ('tv_sec', c_long), ('tv_nsec', c_long)
-  timespec_2 = timespec * 2
-  UTIME_OMIT = (1 << 30) - 2
-  def _lutimensat(path, mtime):
-    m0, m1 = modf(mtime)
-    if libc_utimensat(0, os.path.abspath(path),
-        pointer(timespec_2((0, UTIME_OMIT), (int(m1), int(m0*1e9)))), 256):
-      e = get_errno()
-      raise OSError(e, os.strerror(e))
-  return _lutimensat
-_lutimensat = _lutimensat()
+class UTIME_OMIT():
+   def __divmod__(self, other):
+     assert other == 1000000000
+     return 0, (1 << 30) - 2
+UTIME_OMIT = UTIME_OMIT()
 
+libc = CDLL(ctypes_util.find_library('c'), use_errno=True)
 def _fallocate():
   # We only use it to reduce fragmentation so this must not be replaced by
   # posix_fallocate (which emulates fallocate if kernel/fs does not support it).
@@ -94,7 +81,7 @@ class Stat(object):
 
   NULL_KEY = None, None
   NULL_VALUE = (None,) * 8
-  __slots__ = ('dev', 'ino', 'gid', 'mode', 'mtime', 'rdev', 'size', 'uid',
+  __slots__ = ('dev', 'ino', 'gid', 'mode', 'mtime_ns', 'rdev', 'size', 'uid',
                'acl', 'attr', 'blocks', 'blksize')
 
   def __init__(self, path):
@@ -108,10 +95,9 @@ class Stat(object):
       self.blocks = s.st_blocks
       self.blksize = s.st_blksize
     try:
-      x = xattr(path, XATTR_NOFOLLOW).copy()
-    except IOError as e:
-      if e.errno != errno.EOPNOTSUPP:
-        raise
+      x = dict((x, os.getxattr(path, x, follow_symlinks=False))
+               for x in os.listxattr(path, follow_symlinks=False))
+    except AttributeError:
       a = d = x = None
     else:
       a = x.pop('system.posix_acl_access', None) and str(ACL(file=path))
@@ -189,7 +175,7 @@ class RpcClient(object):
         send((name, args, kw))
         clear_memo()
         if len(args) > 1 and (args[1] is None or
-          isinstance(args[1], (int, basestring))):
+          isinstance(args[1], (int, str))):
           logger.debug('%s(%r, %r)', name, args[0], args[1])
         else:
           logger.debug('%s(%r)', name, args[0])
@@ -199,8 +185,8 @@ class RpcClient(object):
 
 class Local(object):
 
-  NULL_KEY = buffer(dumps(Stat.NULL_KEY, 2))
-  NULL_VALUE = buffer(dumps(Stat.NULL_VALUE, 2))
+  NULL_KEY = dumps(Stat.NULL_KEY, 2)
+  NULL_VALUE = dumps(Stat.NULL_VALUE, 2)
 
   def __init__(self, root, db, rpc, xdev=False):
     self.root = root
@@ -294,8 +280,8 @@ class Local(object):
     while 1:
       try:
         s = Stat(p)
-      except OSError as e:
-        if e.errno != errno.ENOENT or not path:
+      except FileNotFoundError:
+        if not path:
           raise
         return # oops, it has just been deleted
       if path and (s.dev != self.root_dev != None or
@@ -334,14 +320,14 @@ class Local(object):
       if checked:
         return
       # Path already exists on remote and needs to be synchronized.
-      old_key = loads(str(inode))
-      r = Stat.load(old_key, loads(str(metadata)))
+      old_key = loads(inode)
+      r = Stat.load(old_key, loads(metadata))
       old_fmt = stat.S_IFMT(r.mode)
       if old_key != key:
         # Local inode has changed.
         if old_key == Stat.NULL_KEY or \
            sql('select path from fssync where inode=? and path!=?',
-               (buffer(dumps(old_key, 2)), path)).fetchone():
+               (dumps(old_key, 2), path)).fetchone():
           # Remove remote ...
           if self.non_empty(path, r.mode):
             # ... but not directory contents, so delay removal.
@@ -380,11 +366,11 @@ class Local(object):
     if not r:
       # Current path does not exist on remote or can't be reused.
       # Let's see if local inode is the result of a rename or hardlink ...
-      c = sql('select * from fssync where inode=?', (buffer(dumps(key, 2)),))
+      c = sql('select * from fssync where inode=?', (dumps(key, 2),))
       r = c.fetchone()
       while r:
         backup, inode, metadata, _ = r
-        r = Stat.load(loads(str(inode)), loads(str(metadata)))
+        r = Stat.load(loads(inode), loads(metadata))
         if fmt == stat.S_IFMT(r.mode):
           # ... probably (type is the same) so reuse it.
           # If we get interrupted, recovery phase must revert hardlink/rename.
@@ -403,9 +389,7 @@ class Local(object):
                 try:
                   self.rpc.wait()
                   break
-                except OSError as e:
-                  if e.errno != errno.ENOENT:
-                    raise
+                except FileNotFoundError:
                   log.warning("missing %r on remote", backup)
                   # File doesn't exist anymore on remote.
                   # Maybe there's another hardlink to try.
@@ -421,7 +405,7 @@ class Local(object):
         # If an error happens before the final SQL "update", and path disappears
         # before next sync, then we want to be sure it'll be removed on remote.
         sql("insert or replace into fssync values (?, ?, ?, 0)",
-            (path, self.NULL_KEY, buffer(dumps(s.null_value, 2))))
+            (path, self.NULL_KEY, dumps(s.null_value, 2)))
     if fmt == stat.S_IFDIR:
       # Process contents before because this may alter permissions or
       # modification time.
@@ -433,9 +417,9 @@ class Local(object):
       # differs. It will only fail if it tries to remove a non-empty directory.
       if fmt == stat.S_IFREG:
         try:
-          f = open(p)
-        except IOError as e:
-          if e.errno in (errno.ENOENT, errno.EISDIR) and path:
+          f = open(p, 'rb')
+        except (FileNotFoundError, IsADirectoryError):
+          if path:
             return
           raise
         try:
@@ -484,7 +468,7 @@ class Local(object):
       self.rpc.wait()             # (and parents) automatically
     # Do not use 'update' because we didn't insert anything if self.rpc is None.
     sql("insert or replace into fssync values (?, ?, ?, 1)",
-        (path, buffer(dumps(key, 2)), buffer(dumps(value, 2))))
+        (path, dumps(key, 2), dumps(value, 2)))
 
   def clean(self, path):
     sql = self.con.execute
@@ -513,9 +497,9 @@ class Local(object):
     while True:
       row_list = []
       try:
-        for x in xrange(100):
+        for x in range(100):
           path, metadata = fetchone()
-          row_list.append((path, loads(str(metadata))))
+          row_list.append((path, loads(metadata)))
       except TypeError:
         if not row_list:
           break
@@ -529,7 +513,7 @@ class Local(object):
 #      for path, inode, metadata, _ in self.con.execute(
 #         'select * from fssync where ?<path and checked!=0 order by path',
 #         (path,)).fetchall():
-#        r = Stat.load(loads(str(inode)), loads(str(metadata)))
+#        r = Stat.load(loads(inode), loads(metadata))
 #        if self.filter(self.root, path, r):
 #          self.clean(path)
 #          break
@@ -544,7 +528,7 @@ class Remote(object):
   def __init__(self, root):
     self.root = root
 
-  def _open(self, path, mode='r'):
+  def _open(self, path, mode='rb'):
     if self._open_args != (path, mode):
       self._close()
       self._open_file = open(path, mode)
@@ -567,11 +551,12 @@ class Remote(object):
       except EOFError:
         break
       try:
-        if isinstance(args[0], basestring):
+        if isinstance(args[0], str):
           args = (os.path.join(self.root, args[0]),) + args[1:]
         result = getattr(self, method)(*args, **kw)
-      except Exception as result:
+      except Exception as e:
         logger.exception('%s(%r)', method, args[0])
+        result = e
       send(result)
       stdout.flush()
       clear_memo()
@@ -594,20 +579,18 @@ class Remote(object):
       for path in path_list:
         try:
           s = os.lstat(path)
-        except OSError as e:
-          if e.errno != errno.ENOENT:
-            raise
+        except FileNotFoundError:
           continue
         mode = None if os.access(path, 2) else stat.S_IMODE(s.st_mode)
-        parent_list.append((path, s.st_mtime, mode))
+        parent_list.append((path, s.st_mtime_ns, mode))
         if mode is not None:
-          os.chmod(path, 0700)
+          os.chmod(path, 0o700)
       yield
     finally:
-      for path, mtime, mode in parent_list:
+      for path, mtime_ns, mode in parent_list:
         if mode is not None:
           os.chmod(path, mode)
-        _lutimensat(path, mtime)
+        os.utime(path, ns=(UTIME_OMIT, mtime_ns), follow_symlinks=False)
 
   def removemany(self, path_list):
     with self._preserve(os.path.join(self.root, path)
@@ -619,21 +602,19 @@ class Remote(object):
   def isdir(path):
     try:
       return stat.S_ISDIR(os.lstat(path).st_mode)
-    except OSError as e:
-      if e.errno != errno.ENOENT:
-        raise
+    except FileNotFoundError:
+      pass
 
   def remove(self, path):
     try:
       os.remove(path)
-    except OSError as e:
-      if e.errno == errno.EISDIR:
-        os.rmdir(path)
-      elif e.errno == errno.EACCES:
-        os.chmod(os.path.dirname(path), 0700)
-        (os.rmdir if self.isdir(path) else os.remove)(path)
-      elif e.errno != errno.ENOENT:
-        raise
+    except IsADirectoryError:
+      os.rmdir(path)
+    except PermissionError:
+      os.chmod(os.path.dirname(path), 0o700)
+      (os.rmdir if self.isdir(path) else os.remove)(path)
+    except FileNotFoundError:
+      pass
 
   def link(self, path, new_path):
     new_path = os.path.join(self.root, new_path)
@@ -664,18 +645,17 @@ class Remote(object):
   def null_value(self, path):
     try:
       return Stat(path).null_value
-    except OSError as e:
-      if e.errno != errno.ENOENT:
-        raise
+    except FileNotFoundError:
+      pass
 
   @staticmethod
   def _makeparents(path):
     d = os.path.dirname(path)
     if os.path.lexists(d):
       if not os.access(d, 2):
-        os.chmod(d, 0700)
+        os.chmod(d, 0o700)
     else:
-      os.makedirs(d, 0700)
+      os.makedirs(d, 0o700)
 
   def sync_meta(self, path, l):
     x = stat.S_IFMT(l.mode)
@@ -684,9 +664,8 @@ class Remote(object):
     while 1:
       try:
         s = Stat(path)
-      except OSError as e:
-        if e.errno != errno.ENOENT or x == stat.S_IFLNK or \
-           x == stat.S_IFREG and size:
+      except FileNotFoundError:
+        if x == stat.S_IFLNK or x == stat.S_IFREG and size:
           raise
       else:
         if x == stat.S_IFMT(s.mode):
@@ -706,19 +685,12 @@ class Remote(object):
         # we don't want the backup to become sparse and next run will fix this
         # We also check number of blocks in case we allocated more disk space
         # than necessary.
-        # BBB: os.truncate is new to Python 3.3
         try:
-          fd = os.open(path, os.O_WRONLY)
-        except OSError as e:
-          if e.errno != errno.EACCES:
-            raise
-          s.mode |= 0200
+          os.truncate(path, size)
+        except PermissionError:
+          s.mode |= 0o200
           os.chmod(path, s.mode)
-          fd = os.open(path, os.O_WRONLY)
-        try:
-          os.ftruncate(fd, size)
-        finally:
-          os.close(fd)
+          os.truncate(path, size)
     acl = l.acl and l.acl[0]
     if acl != (s.acl and s.acl[0]):
         (ACL(text=acl) if acl else ACL(mode=mode)).applyto(path)
@@ -727,27 +699,24 @@ class Remote(object):
     x = self._pwd[l.uid], self._grp[l.gid]
     if x != (s.uid, s.gid):
       os.lchown(path, *x)
-    x = l.mtime
-    if x != s.mtime:
-      _lutimensat(path, x)
+    x = l.mtime_ns
+    if x != s.mtime_ns:
+      os.utime(path, ns=(UTIME_OMIT, x), follow_symlinks=False)
     acl = l.acl and l.acl[1]
     if acl != (s.acl and s.acl[1]):
       (ACL(text=acl).applyto if acl else delete_default)(path)
     x = l.attr
     if x != s.attr:
-      attr = xattr(path, XATTR_NOFOLLOW)
-      for name in set(s.attr or ()).difference(x or ()):
-        attr.remove(name)
-      if x:
-        attr.update(x)
+      for attr in set(s.attr or ()).difference(x or ()):
+        os.removexattr(path, attr, follow_symlinks=False)
+      for attr, value in x or ():
+        os.setxattr(path, attr, value, follow_symlinks=False)
 
   def _makereg(self, path):
     try:
       if stat.S_ISREG(os.lstat(path).st_mode):
         return True
-    except OSError as e:
-      if e.errno != errno.ENOENT:
-        raise
+    except FileNotFoundError:
       self._makeparents(path)
     else:
       self.remove(path)
@@ -762,17 +731,15 @@ class Remote(object):
       except:
         self._close()
         raise
-    os.close(os.open(path, os.O_CREAT|os.O_EXCL, 0600))
+    os.close(os.open(path, os.O_CREAT|os.O_EXCL, 0o600))
     return ()
 
   def sync_data(self, path, diff_list):
     try:
-      f = self._open(path, 'r+')
-    except IOError as e:
-      if e.errno != errno.EACCES:
-        raise
-      os.chmod(path, 0600)
-      f = self._open(path, 'r+')
+      f = self._open(path, 'r+b')
+    except PermissionError:
+      os.chmod(path, 0o600)
+      f = self._open(path, 'r+b')
     try:
       for offset, data in diff_list:
         f.seek(offset)
@@ -789,11 +756,9 @@ class Remote(object):
   def truncate(self, path, size, sparse):
     self._makereg(path)
     try:
-      fd = os.open(path, os.O_WRONLY|os.O_CREAT, 0600)
-    except OSError as e:
-      if e.errno != errno.EACCES:
-        raise
-      os.chmod(path, 0600)
+      fd = os.open(path, os.O_WRONLY|os.O_CREAT, 0o600)
+    except PermissionError:
+      os.chmod(path, 0o600)
       fd = os.open(path, os.O_WRONLY)
     try:
       if sparse:
@@ -812,16 +777,10 @@ class Remote(object):
       try:
         s = Stat(os.path.join(self.root, path))
         metadata = s.value
-      except OSError as e:
-        if e.errno != errno.ENOENT:
-          raise
+      except FileNotFoundError:
         metadata = None
       if l.value != metadata:
-        if l.value !=  metadata[:2] + (l.mtime,) + metadata[3:]:
-          logger.info("%s: DB %r differs from FS %r", path, l.value, metadata)
-        else:
-          logger.info("%s: mtime differs from %s seconds",
-                      path, abs(l.mtime - s.mtime))
+        logger.info("%s: DB %r differs from FS %r", path, l.value, metadata)
         path_list.append(path)
     return path_list
 
@@ -917,7 +876,7 @@ def main():
         parser.error('conflicting options --remote and ' +
           ('/'.join(a.option_strings) or a.metavar))
 
-    Remote(args.root)(sys.stdin, sys.stdout)
+    Remote(args.root)(sys.stdin.buffer, sys.stdout.buffer)
 
   else:
     if args.remote_executable is None:
@@ -944,13 +903,13 @@ def main():
       local.filter = eval(args.filter, globals(), {})
       if args.print0:
         local.filter = (lambda f: lambda root, path, stat:
-          f(root, path, stat) and (sys.stdout.write(path + '\0'),)
+          f(root, path, stat) and sys.stdout.write(path + '\0')
           )(local.filter)
     local.rollback()
     for p in args.path or ('',):
       if args.check:
         for path in local.check(p):
-          print path
+          print(path)
       else:
         local.sync(p)
         local.clean(p)

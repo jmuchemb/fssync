@@ -1,4 +1,4 @@
-#!/usr/bin/python
+#!/usr/bin/python3.3
 # -*- coding: utf-8 -*-
 #
 # Copyright (C) 2011-2012 Julien Muchembled <jm@jmuchemb.eu>
@@ -18,7 +18,8 @@
 import errno, imp, os, random, shutil, stat, tempfile, unittest
 from collections import defaultdict, deque
 fssync = imp.new_module('fssync')
-execfile(os.path.realpath('fssync'), fssync.__dict__)
+exec(compile(open('fssync').read(), os.path.realpath('fssync'), 'exec'),
+     fssync.__dict__)
 
 # XXX: http://braawi.org/genbackupdata/ (packaged by Debian) may help.
 
@@ -60,7 +61,7 @@ class DummyRpcClient(object):
   def wait(self):
     name, args, kw = self._rpc.popleft()
     self.called[name] += 1
-    if isinstance(args[0], basestring):
+    if isinstance(args[0], str):
       args = (os.path.join(self.remote.root, args[0]),) + args[1:]
     return getattr(self.remote, name)(*args, **kw)
 
@@ -105,7 +106,7 @@ class Remote(fssync.Remote):
 
 
 def gen_data(size, __blob=''.join(chr(int(random.gauss(0, .8)) % 256)
-                                  for x in xrange(100000))):
+                                  for x in range(100000))):
   i = random.randrange(len(__blob) - size)
   return __blob[i:i+size]
 
@@ -126,7 +127,7 @@ class Test(unittest.TestCase):
       d = os.path.dirname(path)
       if not os.path.exists(d):
         os.makedirs(path)
-      with open(path, 'w') as f:
+      with open(path, 'wb') as f:
         f.write(gen_data(size))
     if mode is not None:
       os.chmod(path, mode)
@@ -146,9 +147,7 @@ class Test(unittest.TestCase):
         s = Stat(src_path)
         try:
           d = Stat(dst_path)
-        except OSError:
-          if e.errno != errno.ENOENT:
-            raise
+        except FileNotFoundError:
           return False
         if s.value != d.value:
           return False
@@ -157,8 +156,8 @@ class Test(unittest.TestCase):
           if os.readlink(src_path) != os.readlink(dst_path):
             return False
         elif fmt == stat.S_IFREG:
-          with open(src_path) as s:
-            with open(dst_path) as d:
+          with open(src_path, 'rb') as s:
+            with open(dst_path, 'rb') as d:
               if s.read() != d.read():
                 return False
     return True

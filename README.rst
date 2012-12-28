@@ -154,15 +154,11 @@ BUGS/LIMITATIONS/TODO
    operations are already performed. See also ``-c`` option, with does some
    partial checking.
 
-2. Due to a `Python bug`_, modification times of dirs/files may differ slightly
-   between the source and the destination. Python is only able to represent
-   times as floats, which is not enough for nanosecond precision.
-
-3. fssync should not trash the page cache by using ``posix_fadvise``\ (2).
+2. fssync should not trash the page cache by using ``posix_fadvise``\ (2).
    Unfortunately, Linux does not implement ``POSIX_FADV_NOREUSE`` yet (see
    https://lkml.org/lkml/2011/6/24/136 for more information).
 
-4. fssync process on remote side might leave parent directories with wrong
+3. fssync process on remote side might leave parent directories with wrong
    permissions or modification times if it is terminated during specific
    operation like recovery (at the very beginning), cleanup (at the end),
    rename (if a directory is moved). That is, all operations that need to
@@ -170,7 +166,7 @@ BUGS/LIMITATIONS/TODO
    "Wontfix" for now, because it is unlikely to happen and any solution would
    be quite heavy, for little benefit.
 
-5. Add option not to delete files immediately. fssync can be easily modified
+4. Add option not to delete files immediately. fssync can be easily modified
    to actually remove a file on the remote host after an arbitrary number of
    runs. This would add partial backup functionality and would also speed up
    the case of a file that is temporarily moved out of the tracked folders.
@@ -184,7 +180,6 @@ NOTES
 .. _NONE cipher switching: http://www.psc.edu/networking/projects/hpn-ssh/
 .. _csync2: http://oss.linbit.com/csync2/
 .. _rsync: http://rsync.samba.org/
-.. _Python bug: http://bugs.python.org/issue11457
 .. _DRBD: http://www.drbd.org/
 .. _disconnected/asynchronous mode:
    http://lists.linbit.com/pipermail/drbd-user/2009-January/011210.html

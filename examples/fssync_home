@@ -1,4 +1,4 @@
-#!/usr/bin/python
+#!/usr/bin/python3.3
 import os, stat, sys
 
 def my_filter(root, p, s):
@@ -53,4 +53,5 @@ log = '/.fssync.log'
 sys.argv[1:1] = ('-f', my_filter.__name__, '-X', 'fssync', '-R', 'backup',
                  '-v', '-l', home + log, '-L', 'backup' + log,
                  '-d', home + '/.fssync.db', '-r', home)
-execfile('/usr/bin/fssync')
+fssync = '/usr/bin/fssync'
+exec(compile(open(fssync).read(), fssync, 'exec'))
