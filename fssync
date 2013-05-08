@@ -22,7 +22,7 @@ from ctypes import CDLL, util as ctypes_util, get_errno, c_long
 from hashlib import md5
 from pickle import Pickler, Unpickler, dumps, loads, HIGHEST_PROTOCOL
 from urllib.parse import splitport
-from posix1e import ACL, delete_default
+from posix1e import ACL, ACL_USER, ACL_GROUP, delete_default, Entry, Permset
 
 BLOCK_SIZE = 4096
 PART_SIZE = BLOCK_SIZE * 256
@@ -85,6 +85,25 @@ def _fallocate():
   return _fallocate
 _fallocate = _fallocate()
 
+def dump_acl(**kw):
+  acl = []
+  for e in ACL(**kw):
+    t = e.tag_type
+    p = e.permset
+    acl.append((t << 3 | p.read << 2 | p.write << 1 | p.execute,
+                None if ACL_USER != t != ACL_GROUP else e.qualifier))
+  return acl
+
+def load_acl(acl):
+  a = ACL()
+  for t, q in acl:
+    e = Entry(a)
+    e.tag_type = t >> 3
+    if q is not None:
+      e.qualifier = q
+    Permset(e).add(t & 7)
+  return a
+
 class Stat(object):
   # XXX: Consider splitting mode and moving type from value to key,
   #      in order to simplify code.
@@ -110,8 +129,8 @@ class Stat(object):
     except AttributeError:
       a = d = x = None
     else:
-      a = x.pop('system.posix_acl_access', None) and str(ACL(file=path))
-      d = x.pop('system.posix_acl_default', None) and str(ACL(filedef=path))
+      a = x.pop('system.posix_acl_access', None) and dump_acl(file=path)
+      d = x.pop('system.posix_acl_default', None) and dump_acl(filedef=path)
       x.pop('trusted.SGI_ACL_FILE', None)
       x.pop('trusted.SGI_ACL_DEFAULT', None)
     self.acl = (a or d) and (a, d)
@@ -148,7 +167,8 @@ class RpcClient(object):
   #       - it's faster
   #       - it seems the easiest way to have '.ssh/config' taken into account
 
-  def __init__(self, host, command):
+  def __init__(self, host, command, map_users=False):
+    self._map_users = map_users
     args = ['ssh']
     host, port = splitport(host)
     if port is not None:
@@ -174,13 +194,12 @@ class RpcClient(object):
         send((name, args, kw))
         clear_memo()
     else:
-      if name == 'sync_meta':
+      if name == 'sync_meta' and self._map_users:
         # Send our passwd/group database only if remote will need it.
         send(('pwd_grp', (dict((x.pw_name, x.pw_uid) for x in pwd.getpwall()),
                           dict((x.gr_name, x.gr_gid) for x in grp.getgrall())),
                         {}))
         self.wait()
-        self._pwd_grp = True
       def rpc(*args, **kw):
         send((name, args, kw))
         clear_memo()
@@ -553,6 +572,7 @@ class Local(object):
 class Remote(object):
 
   _open_args = None
+  _pwd = _grp = staticmethod(lambda id: id)
 
   def __init__(self, root):
     assert isinstance(root, bytes), root
@@ -592,10 +612,15 @@ class Remote(object):
       clear_memo()
 
   def pwd_grp(self, p, g):
-    self._pwd = dict((p.get(x.pw_name), x.pw_uid) for x in pwd.getpwall())
-    self._grp = dict((g.get(x.gr_name), x.gr_gid) for x in grp.getgrall())
-    self._pwd.pop(None, None)
-    self._grp.pop(None, None)
+    p = dict((p.get(x.pw_name), x.pw_uid) for x in pwd.getpwall())
+    g = dict((g.get(x.gr_name), x.gr_gid) for x in grp.getgrall())
+    p.pop(None, None); self._pwd = p.__getitem__
+    g.pop(None, None); self._grp = g.__getitem__
+
+  def map_acl(self, acl):
+    return acl and [(t, None if q is None else
+        (self._pwd if t >> 3 == ACL_USER else self._grp)(q))
+      for t, q in acl]
 
   @staticmethod
   @contextmanager
@@ -721,20 +746,20 @@ class Remote(object):
           s.mode |= 0o200
           os.chmod(path, s.mode)
           os.truncate(path, size)
-    acl = l.acl and l.acl[0]
+    acl = self.map_acl(l.acl and l.acl[0])
     if acl != (s.acl and s.acl[0]):
-        (ACL(text=acl) if acl else ACL(mode=mode)).applyto(path)
+        (load_acl(acl) if acl else ACL(mode=mode)).applyto(path)
     elif mode != stat.S_IMODE(s.mode):
       os.chmod(path, mode)
-    x = self._pwd[l.uid], self._grp[l.gid]
+    x = self._pwd(l.uid), self._grp(l.gid)
     if x != (s.uid, s.gid):
       os.lchown(path, *x)
     x = l.mtime_ns
     if x != s.mtime_ns:
       os.utime(path, ns=(UTIME_OMIT, x), follow_symlinks=False)
-    acl = l.acl and l.acl[1]
+    acl = self.map_acl(l.acl and l.acl[1])
     if acl != (s.acl and s.acl[1]):
-      (ACL(text=acl).applyto if acl else delete_default)(path)
+      (load_acl(acl).applyto if acl else delete_default)(path)
     x = l.attr
     if x != s.attr:
       for attr in set(s.attr or ()).difference(x or ()):
@@ -802,8 +827,8 @@ class Remote(object):
     path_list = []
     for path, metadata in item_list:
       l = Stat.load(Stat.NULL_KEY, metadata)
-      l.uid = self._pwd[l.uid]
-      l.gid = self._grp[l.gid]
+      l.uid = self._pwd(l.uid)
+      l.gid = self._grp(l.gid)
       try:
         s = Stat(os.path.join(self.root, path))
         metadata = s.value
@@ -859,6 +884,10 @@ def main():
                    " which takes 3 arguments (root, p, s) and returns"
                    " True if 'root/p' must be ignored. 's' holds some"
                    " stats about 'root/p': see 'Stat' class."),
+    _('-m', '--map-users', action='store_true',
+              help="Map uid/gid, including in ACLs, so that names don't change"
+                   " between local and remote hosts. This requires remote to"
+                   " define all users/groups that may appear locally."),
     _('-L', '--remote-logfile',
               help="Set '-l' option for remote end."),
     _('-R', '--remote-root',
@@ -900,7 +929,7 @@ def main():
   if args.remote:
     for a in local_options:
       v = getattr(args, a.dest)
-      if v if a.dest in ('check', 'print0') else v is not None:
+      if v if a.dest in ('check', 'map_users', 'print0') else v is not None:
         parser.error('conflicting options --remote and ' +
           ('/'.join(a.option_strings) or a.metavar))
 
@@ -912,8 +941,8 @@ def main():
     if args.remote_root is None:
       args.remote_root = args.root
     for a in local_options:
-      if not (getattr(args, a.dest) or
-              a.dest in ('check', 'filter', 'print0', 'remote_logfile')):
+      if not (getattr(args, a.dest) or a.dest in
+          ('check', 'filter', 'map_users', 'print0', 'remote_logfile')):
         parser.error('empty or missing %s argument' %
           ('/'.join(a.option_strings) or a.dest))
 
@@ -925,7 +954,8 @@ def main():
         opt += '-l', args.remote_logfile
       if args.verbose:
         opt.append('-v')
-      rpc = RpcClient(args.host, format_command(args.remote_executable, *opt))
+      rpc = RpcClient(args.host, format_command(args.remote_executable, *opt),
+                      args.map_users)
     local = Local(args.root, args.db, rpc)
     if args.filter:
       local.set_filter(eval(args.filter, globals(), {}), args.print0)

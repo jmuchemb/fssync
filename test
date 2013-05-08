@@ -88,15 +88,7 @@ class Local(fssync.Local):
     return self.rpc.remote
 
 
-class DummyPwdGrp(object):
-
-  def __getitem__(self, id):
-    return id
-
-
 class Remote(fssync.Remote):
-
-  _pwd = _grp = DummyPwdGrp()
 
   def __init__(self):
     super(Remote, self).__init__(fssync.encode(tempfile.mkdtemp()))
