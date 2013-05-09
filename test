@@ -61,7 +61,7 @@ class DummyRpcClient(object):
   def wait(self):
     name, args, kw = self._rpc.popleft()
     self.called[name] += 1
-    if isinstance(args[0], str):
+    if isinstance(args[0], bytes):
       args = (os.path.join(self.remote.root, args[0]),) + args[1:]
     return getattr(self.remote, name)(*args, **kw)
 
@@ -75,7 +75,7 @@ class DummyRpcClient(object):
 class Local(fssync.Local):
 
   def __init__(self):
-    super(Local, self).__init__(tempfile.mkdtemp(), ':memory:',
+    super(Local, self).__init__(fssync.encode(tempfile.mkdtemp()), ':memory:',
                                 DummyRpcClient(Remote()))
 
   def __del__(self):
@@ -99,7 +99,7 @@ class Remote(fssync.Remote):
   _pwd = _grp = DummyPwdGrp()
 
   def __init__(self):
-    super(Remote, self).__init__(tempfile.mkdtemp())
+    super(Remote, self).__init__(fssync.encode(tempfile.mkdtemp()))
 
   def __del__(self):
     shutil.rmtree(self.root)
@@ -136,7 +136,7 @@ class Test(unittest.TestCase):
     isdir = os.path.isdir
     join = os.path.join
     dst_root = self.fssync.remote.root
-    for src, names, files in os.walk('.'):
+    for src, names, files in os.walk(b'.'):
       dst = dst_root + src[1:]
       names = set(names).union(files)
       if names != set(os.listdir(dst)):
@@ -167,9 +167,9 @@ class Test(unittest.TestCase):
     return self.fssync.rpc.called
 
   def sync(self, clean=True):
-    self.fssync.sync('')
+    self.fssync.sync(b'')
     if clean:
-      self.fssync.clean('')
+      self.fssync.clean(b'')
     self.assertSynced()
 
   def assertSynced(self, *args, **kw):
@@ -180,7 +180,8 @@ class Test(unittest.TestCase):
 
   def test1(self):
     import xml
-    shutil.copytree(os.path.dirname(xml.__file__), 'a', symlinks=True)
+    shutil.copytree(fssync.encode(os.path.dirname(xml.__file__)),
+                    b'a', symlinks=True)
     self.assertNotSynced()
     self.sync()
     self.assertEqual(sorted(self.called), ['check_data', 'sync_data',
@@ -190,14 +191,14 @@ class Test(unittest.TestCase):
     self.sync()
     self.assertFalse(self.called)
 
-    os.rename('a', 'b')
+    os.rename(b'a', b'b')
     self.assertNotSynced()
     self.sync()
     self.assertEqual(self.called, dict(rename=1, sync_meta=1))
 
     self.called.clear()
-    os.rename('b', 'c')
-    Stat.set_ino('c')
+    os.rename(b'b', b'c')
+    Stat.set_ino(b'c')
     self.sync()
     self.assertEqual(sorted(self.called), ['link', 'removemany',
                                            'rename', 'sync_meta'])

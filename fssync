@@ -29,6 +29,16 @@ PART_SIZE = BLOCK_SIZE * 256
 
 logger = logging.getLogger(__name__)
 
+# NOTE: All paths are bytes instead of unicode.
+#       This is required in order to handle paths with invalid characters.
+#       For example, b'\x89' on a utf-8 filesystem:
+#         sqlite3.connect(':memory:').execute('select ?', ('\udc89',))
+#       raises UnicodeEncodeError
+decode, encode = (lambda encoding:
+  (lambda path: path.decode(encoding, 'surrogateescape'),
+   lambda path: path.encode(encoding))
+  )(sys.getfilesystemencoding())
+
 class TODO(Exception): pass
 
 _format_command_search = re.compile("[[\\s $({?*\\`#~';<>&|]").search
@@ -175,7 +185,7 @@ class RpcClient(object):
         send((name, args, kw))
         clear_memo()
         if len(args) > 1 and (args[1] is None or
-          isinstance(args[1], (int, str))):
+          isinstance(args[1], (int, bytes))):
           logger.debug('%s(%r, %r)', name, args[0], args[1])
         else:
           logger.debug('%s(%r)', name, args[0])
@@ -189,6 +199,7 @@ class Local(object):
   NULL_VALUE = dumps(Stat.NULL_VALUE, 2)
 
   def __init__(self, root, db, rpc, xdev=False):
+    assert isinstance(root, bytes), root
     self.root = root
     self.rpc = rpc
     self.root_dev = os.lstat(root).st_dev if xdev else None
@@ -202,7 +213,7 @@ class Local(object):
     # This special meaning is part of recovering process in case synchronization
     # was interrupted.
     self.con.execute("""CREATE TABLE IF NOT EXISTS fssync (
-      path text PRIMARY KEY,
+      path blob PRIMARY KEY,
       inode blob,
       metadata blob,
       checked integer)
@@ -214,8 +225,7 @@ class Local(object):
 
   def rename(self, path, new_path, null_key=False):
     sql = self.con.execute
-    min = path + os.sep
-    max = path + chr(ord(os.sep) + 1)
+    minmax = self._minmax(path)
     sql("begin")
     try:
       if new_path:
@@ -223,11 +233,11 @@ class Local(object):
           sql("update fssync set inode=? where path=?", (self.NULL_KEY, path))
         sql("delete from fssync where path=?", (new_path,))
         sql("update fssync set path=? where path=?", (new_path, path))
-        sql("update fssync set path=?||substr(path,?), checked=0"
-            " where ?<path and path<?", (new_path, 1+len(path), min, max))
+        sql("update fssync set path=cast(?||substr(path,?) as blob), checked=0"
+            " where ?<path and path<?", (new_path, 1+len(path)) + minmax)
       else:
         sql("delete from fssync where path=?", (path,))
-        sql("delete from fssync where ?<path and path<?", (min, max))
+        sql("delete from fssync where ?<path and path<?", minmax)
     except:
       self.con.rollback()
       raise
@@ -236,7 +246,7 @@ class Local(object):
   def backup(self, path, null_key=False):
     i = 0
     while True:
-      backup = '%s#fssync%u.bak' % (path, i)
+      backup = path + ('#fssync%u.bak' % i).encode()
       if not os.path.lexists(os.path.join(self.root, backup)):
         try:
           self.con.execute("insert into fssync values (?, ?, null, 0)",
@@ -249,14 +259,22 @@ class Local(object):
     self.rpc.wait()
     self.rename(path, backup, null_key)
 
-  @staticmethod
-  def filter(root, path, stat):
+  def filter(self, path, stat):
     pass
+
+  def set_filter(self, func, print0=False):
+    root = decode(self.root)
+    write = sys.stdout.buffer.write
+    self.filter = lambda path, stat: func(root, decode(path), stat) and (
+      not print0 or write(path + b'\0'))
+
+  _minmax = staticmethod((lambda a, b: lambda path: (path + a, path + b))
+                         (os.sep.encode(), chr(ord(os.sep) + 1).encode()))
 
   def non_empty(self, path, mode):
     return stat.S_ISDIR(mode) and self.con.execute(
       "select 1 from fssync where ?<path and path<?",
-      (path + os.sep, path + chr(ord(os.sep) + 1))).fetchone()
+      self._minmax(path)).fetchone()
 
   def rollback(self):
     # There should not be more than 1 path to recover.
@@ -284,8 +302,7 @@ class Local(object):
         if not path:
           raise
         return # oops, it has just been deleted
-      if path and (s.dev != self.root_dev != None or
-                   self.filter(self.root, path, s)):
+      if path and (s.dev != self.root_dev != None or self.filter(path, s)):
         return
       key = s.key
       if key == self.db_key:
@@ -473,10 +490,11 @@ class Local(object):
   def clean(self, path):
     sql = self.con.execute
     if path:
-      args = path, path + os.sep, path + chr(ord(os.sep) + 1)
+      args = (path,) + self._minmax(path)
       path = "(path=? or ?<path and path<?) and"
     else:
       args = ()
+      path = ''
     path_list = [x for x, in sql(
       "select path from fssync where %s checked=0" % path, args).fetchall()]
     if path_list:
@@ -514,7 +532,7 @@ class Local(object):
 #         'select * from fssync where ?<path and checked!=0 order by path',
 #         (path,)).fetchall():
 #        r = Stat.load(loads(inode), loads(metadata))
-#        if self.filter(self.root, path, r):
+#        if self.filter(path, r):
 #          self.clean(path)
 #          break
 #      else:
@@ -526,6 +544,7 @@ class Remote(object):
   _open_args = None
 
   def __init__(self, root):
+    assert isinstance(root, bytes), root
     self.root = root
 
   def _open(self, path, mode='rb'):
@@ -551,7 +570,7 @@ class Remote(object):
       except EOFError:
         break
       try:
-        if isinstance(args[0], str):
+        if isinstance(args[0], bytes):
           args = (os.path.join(self.root, args[0]),) + args[1:]
         result = getattr(self, method)(*args, **kw)
       except Exception as e:
@@ -808,7 +827,7 @@ def main():
               help="Output logging messages to specified file. If unset,"
                    " they are logged to stderr (local) or to syslog (remote)."
                    " Passing /dev/null disables logging.")
-  _('-r', '--root', required=True,
+  _('-r', '--root', required=True, type=encode,
               help="Root path of dirs/files to synchronize.")
   _('-v', '--verbose', action='store_true',
               help="Increase verbosity to DEBUG level. Default level is INFO.")
@@ -842,7 +861,7 @@ def main():
               help='SSH to connect (syntax: [user@]host[:port]).'
                    " Can be '-' to initialize database, provided you"
                    " synchronized everything by other means (like rsync)."))
-  _('path', nargs='*',
+  _('path', nargs='*', type=encode,
               help="Synchronize only these entries"
                    " (paths must be relative to --root).")
   args = parser.parse_args()
@@ -900,13 +919,9 @@ def main():
       rpc = RpcClient(args.host, format_command(args.remote_executable, *opt))
     local = Local(args.root, args.db, rpc, args.xdev)
     if args.filter:
-      local.filter = eval(args.filter, globals(), {})
-      if args.print0:
-        local.filter = (lambda f: lambda root, path, stat:
-          f(root, path, stat) and sys.stdout.write(path + '\0')
-          )(local.filter)
+      local.set_filter(eval(args.filter, globals(), {}), args.print0)
     local.rollback()
-    for p in args.path or ('',):
+    for p in args.path or (b'',):
       if args.check:
         for path in local.check(p):
           print(path)
