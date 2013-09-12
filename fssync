@@ -133,7 +133,9 @@ class Stat(object):
     try:
       x = dict((x, os.getxattr(path, x, follow_symlinks=False))
                for x in os.listxattr(path, follow_symlinks=False))
-    except AttributeError:
+    except (AttributeError, OSError) as e:
+      if isinstance(e, OSError) and e.errno != errno.ENOTSUP:
+        raise
       a = d = x = None
     else:
       a = x.pop('system.posix_acl_access', None) and dump_acl(file=path)
