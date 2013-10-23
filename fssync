@@ -172,30 +172,23 @@ class Stat(object):
 
 
 class RpcClient(object):
-  # NOTE: we use external 'ssh' command instead of 'paramiko' library because
-  #       - it's faster
-  #       - it seems the easiest way to have '.ssh/config' taken into account
 
-  def __init__(self, host, command, map_users=False):
+  def __init__(self, stdin, stdout, map_users=False):
+    self.stdin = stdin
+    self.stdout = stdout
     self._map_users = map_users
-    args = ['ssh']
-    host, port = splitport(host)
-    if port is not None:
-      args += '-p', port
-    self._p = subprocess.Popen(args + [host, command], bufsize=0,
-                               stdin=subprocess.PIPE, stdout=subprocess.PIPE)
 
   def wait(self):
-    r = loads(read_rpc(self._p.stdout))
+    r = loads(read_rpc(self.stdin))
     if isinstance(r, Exception):
       raise r
     return r
 
   def __getattr__(self, name):
-    stdin = self._p.stdin
-    send = lambda rpc: write_rpc(stdin, dumps(rpc))
-    if name == 'check':
-      self.sync_meta # send pwd_grp if not done yet
+    send = lambda rpc: write_rpc(self.stdout, dumps(rpc))
+    if name in ('check', 'reverse'):
+      if name == 'check':
+        self.sync_meta # send pwd_grp if not done yet
       def rpc(*args, **kw):
         send((name, args, kw))
     else:
@@ -204,6 +197,7 @@ class RpcClient(object):
         send(('pwd_grp', (dict((x.pw_name, x.pw_uid) for x in pwd.getpwall()),
                           dict((x.gr_name, x.gr_gid) for x in grp.getgrall())),
                         {}))
+        logger.debug('pwd_grp(...)')
         self.wait()
       def rpc(*args, **kw):
         send((name, args, kw))
@@ -214,6 +208,23 @@ class RpcClient(object):
           logger.debug('%s(%r)', name, args[0])
     setattr(self, name, rpc)
     return rpc
+
+
+class RpcSshClient(RpcClient):
+  # NOTE: we use external 'ssh' command instead of 'paramiko' library because
+  #       - it's faster
+  #       - it seems the easiest way to have '.ssh/config' taken into account
+
+  def __init__(self, host, command, *args, **kw):
+    cmd = ['ssh']
+    host, port = splitport(host)
+    if port is not None:
+      cmd += '-p', port
+    cmd += host, command
+    self._p = subprocess.Popen(cmd, bufsize=1,
+                               stdin=subprocess.PIPE, stdout=subprocess.PIPE)
+    super(RpcSshClient, self).__init__(self._p.stdout, self._p.stdin.raw,
+                                       *args, **kw)
 
 
 class Local(object):
@@ -249,6 +260,18 @@ class Local(object):
 
   def __del__(self):
     self.con.close()
+
+  def __call__(self, filter=None, path_list=None, check=False, print0=False):
+    if filter:
+      self.set_filter(eval(filter, globals(), {}), print0)
+    self.rollback()
+    for p in path_list or (b'',):
+      if check:
+        for path in self.check(p):
+          print(path)
+      else:
+        self.sync(p)
+        self.clean(p)
 
   def stat(self, path):
     s = Stat(path)
@@ -600,6 +623,9 @@ class Remote(object):
         method, args, kw = loads(read_rpc(stdin))
       except EOFError:
         break
+      if method == 'reverse':
+        Local(self.root, args[0], RpcClient(stdin, stdout, args[1]))(*args[2:])
+        break
       try:
         if isinstance(args[0], bytes):
           args = (os.path.join(self.root, args[0]),) + args[1:]
@@ -607,7 +633,7 @@ class Remote(object):
       except Exception as e:
         logger.exception('%s(%r)', method, args[0])
         result = e
-      write_rpc(stdout.raw, dumps(result))
+      write_rpc(stdout, dumps(result))
 
   def pwd_grp(self, p, g):
     p = dict((p.get(x.pw_name), x.pw_uid) for x in pwd.getpwall())
@@ -866,6 +892,15 @@ def main():
   _('-v', '--verbose', action='store_true',
               help="Increase verbosity to DEBUG level. Default level is INFO.")
   local_options = (
+    _('--reverse', action='store_true',
+              help="Synchronize data from remote(-R, -L, -d, -f)"
+                   " to local(-r, -l), instead of doing it"
+                   " from local(-r, -l, -d, -f) to remote(-R, -L)."
+                   " This option is useful when the SSH connection can be"
+                   " established in only 1 way."
+                   " It is not an option for 2-way synchronization:"
+                   " data must always be synchronized in the same direction."
+                   " This options conflits with --print0 and host=-"),
     _('--print0', action='store_true',
               help="Print filtered paths on the standard output,"
                    " followed by a null character."),
@@ -927,11 +962,11 @@ def main():
   if args.remote:
     for a in local_options:
       v = getattr(args, a.dest)
-      if v if a.dest in ('check', 'map_users', 'print0') else v is not None:
+      if v is a.const if a.nargs == 0 else v is not None:
         parser.error('conflicting options --remote and ' +
           ('/'.join(a.option_strings) or a.metavar))
 
-    Remote(args.root)(sys.stdin.buffer, sys.stdout.buffer)
+    Remote(args.root)(sys.stdin.buffer, sys.stdout.buffer.raw)
 
   else:
     if args.remote_executable is None:
@@ -939,8 +974,8 @@ def main():
     if args.remote_root is None:
       args.remote_root = args.root
     for a in local_options:
-      if not (getattr(args, a.dest) or a.dest in
-          ('check', 'filter', 'map_users', 'print0', 'remote_logfile')):
+      if a.nargs != 0 and not (getattr(args, a.dest) or a.dest in (
+          'filter', 'remote_logfile')):
         parser.error('empty or missing %s argument' %
           ('/'.join(a.option_strings) or a.dest))
 
@@ -952,19 +987,18 @@ def main():
         opt += '-l', args.remote_logfile
       if args.verbose:
         opt.append('-v')
-      rpc = RpcClient(args.host, format_command(args.remote_executable, *opt),
-                      args.map_users)
-    local = Local(args.root, args.db, rpc)
-    if args.filter:
-      local.set_filter(eval(args.filter, globals(), {}), args.print0)
-    local.rollback()
-    for p in args.path or (b'',):
-      if args.check:
-        for path in local.check(p):
-          print(path)
-      else:
-        local.sync(p)
-        local.clean(p)
+      rpc = RpcSshClient(args.host,
+        format_command(args.remote_executable, *opt),
+        args.map_users and not args.reverse)
+    if args.reverse:
+      if rpc is None:
+        parse.error("conflicting options --reverse and HOST=-")
+      if args.print0:
+        parse.error("conflicting options --reverse and --print0")
+      rpc.reverse(args.db, args.map_users, args.filter, args.path)
+      Remote(args.root)(rpc.stdin, rpc.stdout)
+    else:
+      Local(args.root, args.db, rpc)(args.filter, args.path, args.check, args.print0)
 
 if __name__ == '__main__':
   sys.exit(main())
