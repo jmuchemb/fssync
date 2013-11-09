@@ -74,6 +74,8 @@ class DummyRpcClient(object):
 
 class Local(fssync.Local):
 
+  prealloc = True
+
   def __init__(self):
     super(Local, self).__init__(fssync.encode(tempfile.mkdtemp()), ':memory:',
                                 DummyRpcClient(Remote()))

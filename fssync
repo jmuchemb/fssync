@@ -231,6 +231,7 @@ class Local(object):
 
   NULL_KEY = dumps(Stat.NULL_KEY, 2)
   NULL_VALUE = dumps(Stat.NULL_VALUE, 2)
+  prealloc = False
 
   def __init__(self, root, db, rpc):
     assert isinstance(root, bytes), root
@@ -261,9 +262,11 @@ class Local(object):
   def __del__(self):
     self.con.close()
 
-  def __call__(self, filter=None, path_list=None, check=False, print0=False):
+  def __call__(self, filter=None, path_list=None, check=False, print0=False,
+               prealloc=False):
     if filter:
       self.set_filter(eval(filter, globals(), {}), print0)
+    self.prealloc = prealloc
     self.rollback()
     for p in path_list or (b'',):
       if check:
@@ -503,8 +506,10 @@ class Local(object):
           checked = 0
           unchecked = s.size
           if getattr(r, 'size', 0) < unchecked:
-            self.rpc.truncate(path, unchecked, s.blocks * 512 < unchecked)
-            self.rpc.wait()
+            sparse = s.blocks * 512 < unchecked
+            if sparse or self.prealloc and BLOCK_SIZE < unchecked:
+              self.rpc.truncate(path, unchecked, sparse)
+              self.rpc.wait()
           while unchecked > 0:
             part_size = min(PART_SIZE, unchecked)
             self.rpc.check_data(path, checked, part_size, BLOCK_SIZE)
@@ -624,7 +629,8 @@ class Remote(object):
       except EOFError:
         break
       if method == 'reverse':
-        Local(self.root, args[0], RpcClient(stdin, stdout, args[1]))(*args[2:])
+        Local(self.root, args[0], RpcClient(stdin, stdout, args[1]))(
+          *args[2:], **kw)
         break
       try:
         if isinstance(args[0], bytes):
@@ -770,6 +776,10 @@ class Remote(object):
           s.mode |= 0o200
           os.chmod(path, s.mode)
           os.truncate(path, size)
+        if s.size <= size:
+          # Do it twice if we don't reduce file size,
+          # to force FS to free extra space.
+          os.truncate(path, size)
     acl = self.map_acl(l.acl and l.acl[0])
     if acl != (s.acl and s.acl[0]):
         (load_acl(acl) if acl else ACL(mode=mode)).applyto(path)
@@ -904,6 +914,10 @@ def main():
     _('--print0', action='store_true',
               help="Print filtered paths on the standard output,"
                    " followed by a null character."),
+    _('-a', '--allocate', action='store_true',
+              help="Preallocate disk space on destination file system for"
+                   " non-sparse files. This reduces disk fragmentation but"
+                   " prevent files from being compressed on Btrfs."),
     _('-c', '--check', action='store_true',
               help="Check database matches remote host, instead of"
                    " synchronizing. This does not check file contents,"
@@ -995,10 +1009,12 @@ def main():
         parse.error("conflicting options --reverse and HOST=-")
       if args.print0:
         parse.error("conflicting options --reverse and --print0")
-      rpc.reverse(args.db, args.map_users, args.filter, args.path)
+      rpc.reverse(args.db, args.map_users, args.filter,
+                  args.path, prealloc=args.allocate)
       Remote(args.root)(rpc.stdin, rpc.stdout)
     else:
-      Local(args.root, args.db, rpc)(args.filter, args.path, args.check, args.print0)
+      Local(args.root, args.db, rpc)(
+        args.filter, args.path, args.check, args.print0, args.allocate)
 
 if __name__ == '__main__':
   sys.exit(main())
