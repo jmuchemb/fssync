@@ -704,7 +704,7 @@ class Remote(object):
   def link(self, path, new_path):
     new_path = os.path.join(self.root, new_path)
     if os.path.lexists(new_path):
-      if os.path.samefile(path, new_path):
+      if os.path.samestat(os.lstat(path), os.lstat(new_path)):
         return
       self.remove(new_path)
     else:
