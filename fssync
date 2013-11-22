@@ -186,7 +186,7 @@ class RpcClient(object):
 
   def __getattr__(self, name):
     send = lambda rpc: write_rpc(self.stdout, dumps(rpc))
-    if name in ('check', 'reverse'):
+    if name in ('check', 'print', 'reverse'):
       if name == 'check':
         self.sync_meta # send pwd_grp if not done yet
       def rpc(*args, **kw):
@@ -264,14 +264,16 @@ class Local(object):
 
   def __call__(self, filter=None, path_list=None, check=False, print0=False,
                prealloc=False):
+    print = print0 and (self.rpc.print if type(self.rpc) is RpcClient # XXX
+                                       else sys.stdout.buffer.write)
     if filter:
-      self.set_filter(eval(filter, globals(), {}), print0)
+      self.set_filter(eval(filter, globals(), {}), print)
     self.prealloc = prealloc
     self.rollback()
     for p in path_list or (b'',):
       if check:
         for path in self.check(p):
-          print(path)
+          print and print(path + b'\0')
       else:
         self.sync(p)
         self.clean(p)
@@ -320,11 +322,10 @@ class Local(object):
   def filter(self, path, stat):
     pass
 
-  def set_filter(self, func, print0=False):
+  def set_filter(self, func, print=None):
     root = decode(self.root)
-    write = sys.stdout.buffer.write
     self.filter = lambda path, stat: func(root, decode(path), stat) and (
-      not print0 or write(path + b'\0'))
+      print and print(path + b'\0') or 1)
 
   _minmax = staticmethod((lambda a, b: lambda path: (path + a, path + b))
                          (os.sep.encode(), chr(ord(os.sep) + 1).encode()))
@@ -572,6 +573,7 @@ class Local(object):
       path = "where path=? or ?<path and path<?"
     else:
       args = ()
+      path = ""
     fetchone = self.con.execute("select path, metadata from fssync "
                                 + path + " order by path", args).fetchone
     while True:
@@ -633,6 +635,9 @@ class Remote(object):
           *args[2:], **kw)
         break
       try:
+        if method == 'print':
+          sys.stdout.buffer.write(*args)
+          continue
         if isinstance(args[0], bytes):
           args = (os.path.join(self.root, args[0]),) + args[1:]
         result = getattr(self, method)(*args, **kw)
@@ -869,7 +874,7 @@ class Remote(object):
       except FileNotFoundError:
         metadata = None
       if l.value != metadata:
-        logger.info("%s: DB %r differs from FS %r", path, l.value, metadata)
+        logger.warning("%s: DB %r differs from FS %r", path, l.value, metadata)
         path_list.append(path)
     return path_list
 
@@ -912,8 +917,9 @@ def main():
                    " data must always be synchronized in the same direction."
                    " This options conflits with --print0 and host=-"),
     _('--print0', action='store_true',
-              help="Print filtered paths on the standard output,"
-                   " followed by a null character."),
+              help="Print filtered paths on the standard output, followed by a"
+                   " null character. When used with --check, this prints"
+                   " paths that don't match database."),
     _('-a', '--allocate', action='store_true',
               help="Preallocate disk space on destination file system for"
                    " non-sparse files. This reduces disk fragmentation but"
@@ -922,7 +928,7 @@ def main():
               help="Check database matches remote host, instead of"
                    " synchronizing. This does not check file contents,"
                    " symlink target and hardlinks."
-                   " -f and -x have no effect with this option."),
+                   " -a/-f have no effect with this option."),
     _('-d', '--db',
               help="File path to database that maintains"
                    " the state of files on the remote side."),
@@ -1004,17 +1010,14 @@ def main():
       rpc = RpcSshClient(args.host,
         format_command(args.remote_executable, *opt),
         args.map_users and not args.reverse)
+    action = args.filter, args.path, args.check, args.print0, args.allocate
     if args.reverse:
       if rpc is None:
-        parse.error("conflicting options --reverse and HOST=-")
-      if args.print0:
-        parse.error("conflicting options --reverse and --print0")
-      rpc.reverse(args.db, args.map_users, args.filter,
-                  args.path, prealloc=args.allocate)
+        parser.error("conflicting options --reverse and HOST=-")
+      rpc.reverse(args.db, args.map_users, *action)
       Remote(args.root)(rpc.stdin, rpc.stdout)
     else:
-      Local(args.root, args.db, rpc)(
-        args.filter, args.path, args.check, args.print0, args.allocate)
+      Local(args.root, args.db, rpc)(*action)
 
 if __name__ == '__main__':
   sys.exit(main())
