@@ -42,6 +42,11 @@ Other features:
 Main usage of fssync is to prevent data loss in case of hardware failure,
 where RAID1 is not possible (e.g. in laptops).
 
+On Btrfs_ file systems, fssync is an useful alternative to `btrfs send` (and
+`receive`) commands, thanks to filtering capabilities. This can be combined
+with Btrfs snapshotting at destination side for a full backup solution.
+
+
 USAGE
 =====
 
@@ -117,6 +122,8 @@ When a race condition happens, fssync does not guarantee that the remote data
 is in a consistent state. Each sync always fixes existing inconsistencies but
 may introduces others, so fssync is not suitable for hot backuping of databases.
 
+With Btrfs, you can get consistency by snapshotting at source side.
+
 
 SIMILAR PROJECTS
 ================
@@ -127,9 +134,6 @@ detects renames/moves of big files. That's why I see fssync as a partial rewrite
 of csync2, with inode tracking and without bidirectional synchronization.
 The local database really makes fssync & csync2 faster than the well-known
 rsync_.
-
-Another solution I considered to secure my laptop data was DRBD_ in
-`disconnected/asynchronous mode`_.
 
 
 SEE ALSO
@@ -166,20 +170,13 @@ BUGS/LIMITATIONS/TODO
    "Wontfix" for now, because it is unlikely to happen and any solution would
    be quite heavy, for little benefit.
 
-4. Add option not to delete files immediately. fssync can be easily modified
-   to actually remove a file on the remote host after an arbitrary number of
-   runs. This would add partial backup functionality and would also speed up
-   the case of a file that is temporarily moved out of the tracked folders.
-
 
 NOTES
 =====
 
 .. target-notes::
 
+.. _Btrfs: https://btrfs.wiki.kernel.org/
 .. _NONE cipher switching: http://www.psc.edu/networking/projects/hpn-ssh/
 .. _csync2: http://oss.linbit.com/csync2/
 .. _rsync: http://rsync.samba.org/
-.. _DRBD: http://www.drbd.org/
-.. _disconnected/asynchronous mode:
-   http://lists.linbit.com/pipermail/drbd-user/2009-January/011210.html
