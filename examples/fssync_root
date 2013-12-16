@@ -1,0 +1,37 @@
+#!/usr/bin/python3.3
+import os, stat, sys
+
+# Example wrapper for Debian root partition.
+
+def my_filter(root, p, s):
+  try:
+    r, p = p.split('/', 1)
+  except ValueError:
+    # Make sure those top directories are never touched on destination.
+    # For example, without this, they would be tracked if you initialized the
+    # DB on destination side (after a raw copy of the partition), and any of
+    # these folder with something mounted on source host would be deleted by
+    # fssync on destination host.
+    return p in ('dev', 'home', 'media', 'proc', 'run', 'sys', 'tmp')
+  else:
+    try:
+      d, b = p.rsplit('/', 1)
+    except ValueError:
+      pass
+    else:
+      if r == 'var':
+        if p.startswith('lib/apt/lists/'):
+          return b != 'lock' and stat.S_ISREG(s.mode)
+        if d in ('lib', 'log'):
+          return b.startswith('fssync.')
+        if d == 'cache/apt':
+          return b.endswith('cache.bin')
+        return d == 'tmp'
+
+log = '/var/log/fssync.log'
+remote = '/mnt/backup-root'
+sys.argv[1:1] = ('-f', my_filter.__name__, '-R', remote,
+                 '-v', '-l', log, '-L', remote + log,
+                 '-d', '/var/lib/fssync.db', '-r', '/')
+fssync = '/usr/bin/fssync'
+exec(compile(open(fssync).read(), fssync, 'exec'))

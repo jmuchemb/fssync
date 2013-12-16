@@ -14,6 +14,7 @@ def my_filter(root, p, s):
         '.adobe',
         '.cache', # XDG_CACHE_HOME
         '.dbus',
+        '.fishsrv.pl',
         '.fontconfig',
         '.fssync.log',
         '.gconfd',
@@ -52,6 +53,6 @@ home = os.environ['HOME']
 log = '/.fssync.log'
 sys.argv[1:1] = ('-f', my_filter.__name__, '-X', 'fssync', '-R', 'backup',
                  '-v', '-l', home + log, '-L', 'backup' + log,
-                 '-d', home + '/.fssync.db', '-r', home)
+                 '-d', home + '/.fssync.db', '-r', home, '-m')
 fssync = '/usr/bin/fssync'
 exec(compile(open(fssync).read(), fssync, 'exec'))

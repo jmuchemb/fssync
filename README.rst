@@ -73,10 +73,20 @@ First run of fssync:
   all dirs/files to remote host.
 - A faster way may be to do the initial copy by other means, like a raw copy of
   a partition. If you're absolutely sure the source and destination are exactly
-  the same, you can initialize the database by specifying ``-`` as host.
+  the same, you can initialize the database by specifying ``-`` as host. If
+  inode numbers are the same on both sides, which is the case if data were
+  copied at block level, you can modify the source partition while you are
+  initializing the DB on the destination one, and get back the DB locally.
 
 An example of wrapper around fssync, with a filter, can be found at
 `examples/fssync_home`
+
+fssync does never descend directories on other filesystems. But you may want
+to explicitly use a filter to exclude mount points, because if fssync is run
+whereas nothing is mounted, the directory will be tracked, and if it is run
+again with something mounted, the directory will removed at destination side.
+This is particularly important with system partitions, if you want to preserve
+the usual mount points like /dev, /proc, etc.
 
 See also the `NONE cipher switching`_ patch if you don't need encryption and
 you want to speed up your SSH connection.
@@ -150,7 +160,7 @@ BUGS/LIMITATIONS/TODO
    might become corrupted, and even if it isn't, it may not reflect anymore the
    status of the remote host and later runs may fail (for example, fssync
    refuses to replace a non-empty folder it doesn't know by a non-folder).
-   So in any case, it is adviced to rebuild the DB.
+   So in any case, it is advised to rebuild the DB.
 
    If the DB is not corrupted and you don't want to rebuild it, you can try
    to update it by running fssync again as soon as possible, so that the same
@@ -169,6 +179,16 @@ BUGS/LIMITATIONS/TODO
    temporarily alter a directory that is not being checked.
    "Wontfix" for now, because it is unlikely to happen and any solution would
    be quite heavy, for little benefit.
+
+4. Add 2 options to map specific users or groups. You may want this if you get
+   permission errors and this is certainly a better solution than an option not
+   to preserve ownership. Currently, on destination host, you must either run
+   fssync as root, or configure security so that it is allowed to change
+   ownership with same uid/gid than on source (or with same user/group names if
+   ``--map-users`` option is given).
+
+5. fssync does not resume synchronization of a new file. Should be fixed in a
+   future release.
 
 
 NOTES

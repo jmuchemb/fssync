@@ -661,7 +661,7 @@ class Remote(object):
   @contextmanager
   def _preserve(path_list, parent=False):
     # XXX: This is the only place where fssync should not be terminated,
-    #      or directories may end up wrong permissions/timestamps.
+    #      or directories may end up with wrong permissions/timestamps.
     if parent:
       path_list = frozenset(map(os.path.dirname, path_list))
     parent_list = []
@@ -729,6 +729,7 @@ class Remote(object):
     if other is not None and self.isdir(path):
       other = os.path.join(self.root, other)
       with self._preserve((other,), True):
+        # If src & dst are the same inode, this is a no-op.
         os.rename(path, other)
     self.remove(path)
 
@@ -919,7 +920,8 @@ def main():
     _('--print0', action='store_true',
               help="Print filtered paths on the standard output, followed by a"
                    " null character. When used with --check, this prints"
-                   " paths that don't match database."),
+                   " paths that don't match database. You can pipe result to"
+                   " \"tr -s '\\0' '\\n'\" if you want newline separators."),
     _('-a', '--allocate', action='store_true',
               help="Preallocate disk space on destination file system for"
                    " non-sparse files. This reduces disk fragmentation but"
