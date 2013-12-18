@@ -467,7 +467,7 @@ class Local(object):
                   self.rpc.wait()
                   break
                 except FileNotFoundError:
-                  log.warning("missing %r on remote", backup)
+                  logger.warning("missing %r on remote", backup)
                   # File doesn't exist anymore on remote.
                   # Maybe there's another hardlink to try.
                   backup = c.next()[0]
@@ -476,7 +476,7 @@ class Local(object):
             break
           except StopIteration:
             # All hardlinks are missing on remote, so create new.
-            log.warning("... create new file for %r", path)
+            logger.warning("... create new file for %r", path)
         r = None
       else:
         # If an error happens before the final SQL "update", and path disappears
