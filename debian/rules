@@ -1,20 +1,20 @@
 #!/usr/bin/make -f
 # -*- makefile -*-
-
-# Uncomment this to turn on verbose mode.
 #export DH_VERBOSE=1
 
-override_dh_auto_clean:
-	rm -f fssync.1
+PKD  = $(abspath $(dir $(MAKEFILE_LIST)))
+PKG  = $(word 2, $(shell dpkg-parsechangelog -l$(PKD)/changelog))
+UVER = $(shell dpkg-parsechangelog -l$(PKD)/changelog | \
+               sed -nr 's/^Version: (.*:)?(.*)-(.*)/\2/p')
 
-fssync.1: README.rst
-	rst2man $< $@
-
-override_dh_installman: fssync.1
-	dh_installman $<
-
-override_dh_install:
-	dh_install fssync usr/bin
+.PHONY: get-orig-source
+get-orig-source: $(PKG)_$(UVER).orig.tar.xz
+$(PKG)_$(UVER).orig.tar.xz:
+	set $(PKG)-$(UVER)/; (cd $(PKD)/.. && git archive --format=tar \
+	--prefix=$$1 HEAD) | tar --delete $$1debian/ $$1.gitignore | xz > $@
 
 %:
 	dh $@
+
+override_dh_auto_install:
+	dh_auto_install -- PREFIX=/usr

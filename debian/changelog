@@ -1,3 +1,5 @@
-fssync (0.1-1) unstable; urgency=low
+fssync (1.0-1) unstable; urgency=low
 
- -- Julien Muchembled <jm@jmuchemb.eu>  Wed, 02 May 2012 02:12:25 +0200
+  * Initial release (Closes: #732332)
+
+ -- Julien Muchembled <jm@jmuchemb.eu>  Wed, 18 Dec 2013 20:38:51 +0100

@@ -3,12 +3,13 @@ Section: utils
 Priority: extra
 Maintainer: Julien Muchembled <jm@jmuchemb.eu>
 Build-Depends: debhelper (>= 8.0.0), python-docutils
-Standards-Version: 3.9.2
+Standards-Version: 3.9.5
 Homepage: http://jmuchemb.eu/fssync.git
+Vcs-Git: git://jmuchemb.eu/fssync.git
 
 Package: fssync
 Architecture: all
-Depends: python3.3, python3-pylibacl (>> 0.5.1-1.1), openssh-client
+Depends: ${misc:Depends}, python3.3, python3-pylibacl (>> 0.5.1-1.1), openssh-client | openssh-server
 Description: File system synchronization tool (1-way, over SSH)
  fssync is a 1-way file-synchronization tool that tracks inodes and maintains a
  local database of files that are on the remote side, making it able to:
@@ -31,3 +32,7 @@ Description: File system synchronization tool (1-way, over SSH)
  .
  Main usage of fssync is to prevent data loss in case of hardware failure,
  where RAID1 is not possible (e.g. in laptops).
+ .
+ On Btrfs file systems, fssync is an useful alternative to `btrfs send` (and
+ `receive`) commands, thanks to filtering capabilities. This can be combined
+ with Btrfs snapshotting at destination side for a full backup solution.
