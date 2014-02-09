@@ -804,8 +804,9 @@ class Remote(object):
     if x != s.attr:
       for attr in set(s.attr or ()).difference(x or ()):
         os.removexattr(path, attr, follow_symlinks=False)
-      for attr, value in x or ():
-        os.setxattr(path, attr, value, follow_symlinks=False)
+      if x:
+        for attr, value in x.items():
+          os.setxattr(path, attr, value, follow_symlinks=False)
 
   def _makereg(self, path):
     try:
