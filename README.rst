@@ -81,12 +81,10 @@ First run of fssync:
 An example of wrapper around fssync, with a filter, can be found at
 `examples/fssync_home`
 
-fssync does never descend directories on other filesystems. But you may want
-to explicitly use a filter to exclude mount points, because if fssync is run
-whereas nothing is mounted, the directory will be tracked, and if it is run
-again with something mounted, the directory will removed at destination side.
-This is particularly important with system partitions, if you want to preserve
-the usual mount points like /dev, /proc, etc.
+fssync does never descend directories on other filesystems. Inodes masked by
+mount points are also skipped, so they should be unmounted temporarily if you
+want them to be synchronized. The same result can be achieved by synchronizing
+from a bind mount.
 
 See also the `NONE cipher switching`_ patch if you don't need encryption and
 you want to speed up your SSH connection.

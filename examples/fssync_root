@@ -7,12 +7,7 @@ def my_filter(root, p, s):
   try:
     r, p = p.split('/', 1)
   except ValueError:
-    # Make sure those top directories are never touched on destination.
-    # For example, without this, they would be tracked if you initialized the
-    # DB on destination side (after a raw copy of the partition), and any of
-    # these folder with something mounted on source host would be deleted by
-    # fssync on destination host.
-    return p in ('dev', 'home', 'media', 'proc', 'run', 'sys', 'tmp')
+    pass
   else:
     try:
       d, b = p.rsplit('/', 1)

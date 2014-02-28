@@ -25,15 +25,29 @@ exec(compile(open('fssync').read(), os.path.realpath('fssync'), 'exec'),
 
 class Stat(fssync.Stat):
 
+  _fake_dev = set()
   _fake_ino = {}
   _last_ino = 0
 
   def __init__(self, path):
     super(Stat, self).__init__(path)
+    if self.key in self._fake_dev:
+      self.dev += 1
     try:
       self.ino = self._fake_ino[path]
     except KeyError:
       pass
+
+  @classmethod
+  def fake_dev(cls, path):
+    cls._fake_dev.add(cls.__bases__[0](path).key)
+
+  @classmethod
+  def reset_dev(cls, path=None):
+    if path:
+      cls._fake_dev.remove(cls.__bases__[0](path).key)
+    else:
+      cls._fake_dev.clear()
 
   @classmethod
   def set_ino(cls, path, ino=None):
@@ -47,6 +61,12 @@ class Stat(fssync.Stat):
   def reset_ino(cls):
     cls._fake_ino.clear()
     cls._last_ino = 0
+
+  @classmethod
+  def _lstat(cls, name, **kw):
+    s = os.lstat(name, **kw)
+    return type(s)(s[:2] + (-1,) + s[3:]) \
+      if (s.st_dev, s.st_ino) in cls._fake_dev else s
 
 fssync.Stat = Stat
 
@@ -85,6 +105,9 @@ class Local(fssync.Local):
     super(Local, self).__del__()
     Stat.reset_ino()
 
+  def is_masked(self, path):
+    return super(Local, self).is_masked(path, Stat._lstat)
+
   @property
   def remote(self):
     return self.rpc.remote
@@ -99,8 +122,8 @@ class Remote(fssync.Remote):
     shutil.rmtree(self.root)
 
 
-def gen_data(size, __blob=''.join(chr(int(random.gauss(0, .8)) % 256)
-                                  for x in range(100000))):
+def gen_data(size, __blob=bytes(int(random.gauss(0, .8)) % 256
+                                for x in range(100000))):
   i = random.randrange(len(__blob) - size)
   return __blob[i:i+size]
 
@@ -114,15 +137,12 @@ class Test(unittest.TestCase):
   def tearDown(self):
     del self.fssync
 
-  def mknod(self, path, size=None, sparse_map=0, mode=None):
-    if size is None:
-      os.makedirs(path)
-    else:
-      d = os.path.dirname(path)
-      if not os.path.exists(d):
-        os.makedirs(path)
-      with open(path, 'wb') as f:
-        f.write(gen_data(size))
+  def mkreg(self, path, size=0, sparse_map=0, mode=None):
+    d = os.path.dirname(path)
+    if d and not os.path.exists(d):
+      os.makedirs(d)
+    with open(path, 'wb') as f:
+      f.write(gen_data(size))
     if mode is not None:
       os.chmod(path, mode)
 
@@ -196,6 +216,25 @@ class Test(unittest.TestCase):
     self.sync()
     self.assertEqual(sorted(self.called), ['link', 'removemany',
                                            'rename', 'sync_meta'])
+
+  def test2(self):
+    self.mkreg(b'a')
+    os.mkdir(b'b')
+    os.link(b'a', b'b/c')
+    self.sync()
+    self.assertEqual(self.called, dict(link=1, sync_meta=3))
+
+    self.called.clear()
+    Stat.fake_dev(b'b')
+    self.sync()
+
+    os.rename(b'a', b'c')
+    self.assertRaises(SystemExit, self.sync)
+    self.assertFalse(self.called)
+
+    Stat.reset_dev(b'b')
+    self.sync()
+    self.assertEqual(self.called, dict(link=1, removemany=1, sync_meta=1))
 
 
 if __name__ == '__main__':

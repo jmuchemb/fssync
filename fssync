@@ -236,9 +236,12 @@ class Local(object):
   def __init__(self, root, db, rpc):
     assert isinstance(root, bytes), root
     self.root = root
+    self.root_fd = os.open(self.root, os.O_RDONLY)
+    self.root_dev = os.fstat(self.root_fd).st_dev
     self.rpc = rpc
     # TODO: Add option to map other filesystems ?
-    self.dev_map = {os.lstat(root).st_dev: None}
+    self.dev_map = {self.root_dev: None}
+    self.masked = []
     self.con = sqlite3.connect(db, isolation_level=None)
     # I wish I could get fd of sqlite connection and pass it to os.fstat
     try:
@@ -260,6 +263,7 @@ class Local(object):
     self.con.execute("CREATE INDEX IF NOT EXISTS _fssync_i1 ON fssync(inode)")
 
   def __del__(self):
+    os.close(self.root_fd)
     self.con.close()
 
   def __call__(self, filter=None, path_list=None, check=False, print0=False,
@@ -351,16 +355,46 @@ class Local(object):
         self.rpc.wait()
       sql("delete from fssync where path=?", (path,))
 
+  def is_masked(self, path, _lstat=os.lstat, _sep=os.sep.encode()):
+    parts = path.split(_sep)
+    fd = self.root_fd
+    fd_list = []
+    try:
+      for i, x in enumerate(parts):
+        s = _lstat(x, dir_fd=fd)
+        while 1:
+          if s.st_dev != self.root_dev:
+            return _sep.join(parts[:i+1])
+          if not stat.S_ISDIR(s.st_mode):
+            return
+          try:
+            fd = os.open(x, os.O_RDONLY, fd)
+            break
+          except PermissionError:
+            ss = _lstat(x, fd)
+            if ss == s:
+              raise
+            s = ss
+      fd_list.append(fd)
+    except FileNotFoundError:
+      pass
+    finally:
+      for fd in fd_list:
+        os.close(fd)
+
   def sync(self, path):
     sql = self.con.execute
     p = os.path.join(self.root, path)
     while 1:
       try:
         s = self.stat(p)
-      except (KeyError,           # other filesystem
-              FileNotFoundError): # oops, it has just been deleted
+      except ( KeyError          # other filesystem
+             , FileNotFoundError # oops, it has just been deleted
+             ) as e:
         if not path:
           raise
+        if isinstance(e, KeyError):
+          self.masked.append(path)
         return
       if path and self.filter(path, s):
         return
@@ -446,7 +480,15 @@ class Local(object):
       c = sql('select * from fssync where inode=?', (dumps(key, 2),))
       r = c.fetchone()
       while r:
-        backup, inode, metadata, _ = r
+        backup, inode, metadata, checked = r
+        if not checked:
+          sub_root = self.is_masked(backup)
+          if sub_root:
+            sys.exit(
+              "Can not synchronize %r because %r has/had same inode."
+              " %r must be unmounted first (if it's not a mount point,"
+              " e.g. a subvolume, then move it temporarily outside %r)."
+              % tuple(decode(x) for x in (path, backup, sub_root, self.root)))
         r = Stat.load(loads(inode), loads(metadata))
         if fmt == stat.S_IFMT(r.mode):
           # ... probably (type is the same) so reuse it.
@@ -553,19 +595,26 @@ class Local(object):
   def clean(self, path):
     sql = self.con.execute
     if path:
-      args = (path,) + self._minmax(path)
+      reset_args = (path,) + self._minmax(path)
       path = "(path=? or ?<path and path<?) and"
     else:
-      args = ()
+      reset_args = ()
       path = ''
-    path_list = [x for x, in sql(
-      "select path from fssync where %s checked=0" % path, args).fetchall()]
+    args = list(reset_args)
+    query = " from fssync where %s checked=0" % path
+    if self.masked:
+      for m in self.masked:
+        args.append(m)
+        args += self._minmax(m)
+      query += " and not (%s)" % " or ".join(
+        ["path=? or ?<path and path<?"] * len(self.masked))
+    path_list = [x for x, in sql("select path" + query, args).fetchall()]
     if path_list:
       path_list.sort(reverse=True)
       self.rpc.removemany(path_list)
       self.rpc.wait()
-      sql("delete from fssync where %s checked=0" % path, args)
-    sql("update fssync set checked=0 where %s 1" % path, args)
+      sql("delete" + query, args)
+    sql("update fssync set checked=0 where %s 1" % path, reset_args)
 
   def check(self, path):
     if path:
