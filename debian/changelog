@@ -1,3 +1,11 @@
+fssync (1.1-1) unstable; urgency=medium
+
+  * New upstream release.
+  * Stop depending explicitly on Python 3.3 (Closes: #739882).
+  * Update copyright years.
+
+ -- Julien Muchembled <jm@jmuchemb.eu>  Mon, 10 Mar 2014 20:33:12 +0100
+
 fssync (1.0-1) unstable; urgency=low
 
   * Initial release (Closes: #732332)

@@ -1,0 +1,19 @@
+Change History
+==============
+
+1.1 (2014-03-10)
+----------------
+
+- Destination side failed at synchronizing extended attributes.
+- README: What is not synchronized is documented in paragraph 4
+  of BUGS/LIMITATIONS/TODO section.
+- Better support of mount points, to safely synchronize when everything is
+  unmounted, without having to explicitly filter them. Instead of deleting
+  inodes (usually empty directories) that get masked by other filesystems,
+  fssync now checks these inodes don't appear in the visible/synchronized tree.
+  `fssync_root` example is updated to reflect this.
+
+1.0 (2013-12-18)
+----------------
+
+Initial release.
