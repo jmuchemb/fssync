@@ -9,7 +9,7 @@ Vcs-Git: git://jmuchemb.eu/fssync.git
 
 Package: fssync
 Architecture: all
-Depends: ${misc:Depends}, python3.3, python3-pylibacl (>> 0.5.1-1.1), openssh-client | openssh-server
+Depends: ${misc:Depends}, python3 (>= 3.3), python3-pylibacl (>> 0.5.1-1.1), openssh-client | openssh-server
 Description: File system synchronization tool (1-way, over SSH)
  fssync is a 1-way file-synchronization tool that tracks inodes and maintains a
  local database of files that are on the remote side, making it able to:
