@@ -1044,7 +1044,7 @@ def main():
     if args.remote_executable is None:
       args.remote_executable = os.path.realpath(sys.argv[0])
     if args.remote_root is None:
-      args.remote_root = encode(args.root)
+      args.remote_root = decode(args.root)
     for a in local_options:
       if a.nargs != 0 and not (getattr(args, a.dest) or a.dest in (
           'filter', 'remote_logfile')):
