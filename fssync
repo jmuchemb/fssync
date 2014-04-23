@@ -121,7 +121,6 @@ class Stat(object):
                'acl', 'attr', 'blocks', 'blksize')
 
   def __init__(self, path):
-    # XXX: see http://bugs.python.org/issue11457
     s = os.lstat(path)
     for k in self.__slots__[:-4]:
       setattr(self, k, getattr(s, 'st_' + k))
