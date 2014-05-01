@@ -511,7 +511,7 @@ class Local(object):
                   logger.warning("missing %r on remote", backup)
                   # File doesn't exist anymore on remote.
                   # Maybe there's another hardlink to try.
-                  backup = c.next()[0]
+                  backup = next(c)[0]
               sql("update fssync set inode=?, metadata=? where path=?",
                   (inode, metadata, path))
             break
