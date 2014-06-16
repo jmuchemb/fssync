@@ -319,7 +319,12 @@ class Local(object):
           pass
       i += 1
     self.rpc.rename(path, backup)
-    self.rpc.wait()
+    try:
+      self.rpc.wait()
+    except FileNotFoundError:
+      logger.warning("missing %r on remote", path)
+      self.con.execute("delete from fssync where path=?", (backup,))
+      backup = False
     self.rename(path, backup, null_key)
 
   def filter(self, path, stat):
