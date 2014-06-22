@@ -130,11 +130,15 @@ def gen_data(size, __blob=bytes(int(random.gauss(0, .8)) % 256
 
 class Test(unittest.TestCase):
 
+  os_listdir = staticmethod(os.listdir)
+
   def setUp(self):
     self.fssync = Local()
     os.chdir(self.fssync.root)
+    os.listdir = lambda p: sorted(self.os_listdir(p))
 
   def tearDown(self):
+    os.listdir = self.os_listdir
     del self.fssync
 
   def mkreg(self, path, size=0, sparse_map=0, mode=None):
@@ -146,51 +150,44 @@ class Test(unittest.TestCase):
     if mode is not None:
       os.chmod(path, mode)
 
-  def isSynced(self):
+  def assertSynced(self):
     isdir = os.path.isdir
     join = os.path.join
     dst_root = self.fssync.remote.root
     for src, names, files in os.walk(b'.'):
       dst = dst_root + src[1:]
       names = set(names).union(files)
-      if names != set(os.listdir(dst)):
-        return False
+      self.assertEqual(names, set(os.listdir(dst)))
       for name in names:
         src_path = join(src, name)
         dst_path = join(dst, name)
         s = Stat(src_path)
         try:
           d = Stat(dst_path)
-        except FileNotFoundError:
-          return False
-        if s.value != d.value:
-          return False
+        except FileNotFoundError as e:
+          self.fail(str(e))
+        self.assertEqual(s.value, d.value, name)
         fmt = stat.S_IFMT(s.mode)
         if fmt == stat.S_IFLNK:
-          if os.readlink(src_path) != os.readlink(dst_path):
-            return False
+          self.assertEqual(os.readlink(src_path), os.readlink(dst_path), name)
         elif fmt == stat.S_IFREG:
           with open(src_path, 'rb') as s:
             with open(dst_path, 'rb') as d:
-              if s.read() != d.read():
-                return False
-    return True
+              self.assertEqual(s.read(), d.read(), name)
+
+  def assertNotSynced(self):
+    self.assertRaises(self.failureException, self.assertSynced)
 
   @property
   def called(self):
     return self.fssync.rpc.called
 
-  def sync(self, clean=True):
+  def sync(self, clean=True, synced=True):
     self.fssync.sync(b'')
     if clean:
       self.fssync.clean(b'')
-    self.assertSynced()
-
-  def assertSynced(self, *args, **kw):
-    self.assertTrue(self.isSynced(), *args, **kw)
-
-  def assertNotSynced(self, *args, **kw):
-    self.assertFalse(self.isSynced(), *args, **kw)
+    del self.fssync.masked[:]
+    (self.assertSynced if synced else self.assertNotSynced)()
 
   def test1(self):
     import xml
@@ -235,6 +232,19 @@ class Test(unittest.TestCase):
     Stat.reset_dev(b'b')
     self.sync()
     self.assertEqual(self.called, dict(link=1, removemany=1, sync_meta=1))
+
+    self.called.clear()
+    os.link(b'c', b'd')
+    self.fssync.remote.removemany([b'b/c'])
+    self.sync(synced=False)
+    self.sync()
+    self.assertEqual(self.called, dict(link=3, sync_meta=2))
+
+    self.called.clear()
+    os.rename(b'b', b'a')
+    shutil.rmtree(self.fssync.remote.root + b'/b')
+    self.sync()
+    self.assertEqual(self.called, dict(link=1, rename=1, sync_meta=2))
 
 
 if __name__ == '__main__':
