@@ -322,7 +322,7 @@ class Local(object):
     try:
       self.rpc.wait()
     except FileNotFoundError:
-      logger.warning("missing %r on remote", path)
+      logger.warning("missing %r on desination side", path)
       self.con.execute("delete from fssync where path=?", (backup,))
       backup = False
     self.rename(path, backup, null_key)
@@ -496,33 +496,37 @@ class Local(object):
         r = Stat.load(loads(inode), loads(metadata))
         if fmt == stat.S_IFMT(r.mode):
           # ... probably (type is the same) so reuse it.
+          # Fetch remaining rows before we do any SQL change.
+          # I don't know if this is required by SQLite but
+          # http://bugs.python.org/issue10513 does not leave me the choice.
+          c = iter(c.fetchall())
           # If we get interrupted, recovery phase must revert hardlink/rename.
           sql("insert or replace into fssync values (?, ?, null, 0)",
               (path, backup))
           # If target already exists (and is not a non-empty directory),
           # it will be automatically deleted first.
           try:
-            if fmt == stat.S_IFDIR:
-              self.rpc.rename(backup, path)
-              self.rpc.wait()
-              self.rename(backup, path)
-            else:
-              while True:
-                self.rpc.link(backup, path)
-                try:
+            while True:
+              try:
+                if fmt == stat.S_IFDIR:
+                  self.rpc.rename(backup, path)
                   self.rpc.wait()
-                  break
-                except FileNotFoundError:
-                  logger.warning("missing %r on remote", backup)
-                  # File doesn't exist anymore on remote.
-                  # Maybe there's another hardlink to try.
-                  backup = next(c)[0]
-              sql("update fssync set inode=?, metadata=? where path=?",
-                  (inode, metadata, path))
+                  self.rename(backup, path)
+                else:
+                  self.rpc.link(backup, path)
+                  self.rpc.wait()
+                  sql("update fssync set inode=?, metadata=? where path=?",
+                      (inode, metadata, path))
+                break
+              except FileNotFoundError:
+                logger.warning("missing %r on destination side", backup)
+                self.rename(backup, None)
+                # Maybe there's another hardlink to try.
+                backup = next(c)[0]
             break
           except StopIteration:
             # All hardlinks are missing on remote, so create new.
-            logger.warning("... create new file for %r", path)
+            logger.warning("... create new inode for %r", path)
         r = None
       else:
         # If an error happens before the final SQL "update", and path disappears
