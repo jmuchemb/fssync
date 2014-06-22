@@ -324,8 +324,9 @@ class Local(object):
     except FileNotFoundError:
       logger.warning("missing %r on desination side", path)
       self.con.execute("delete from fssync where path=?", (backup,))
-      backup = False
+      backup = None
     self.rename(path, backup, null_key)
+    return backup
 
   def filter(self, path, stat):
     pass
@@ -429,6 +430,7 @@ class Local(object):
               return
           raise
       break
+    sync_parent = False
     r = sql('select * from fssync where path=?', (path,)).fetchall()
     if r:
       (_, inode, metadata, checked), = r
@@ -448,7 +450,7 @@ class Local(object):
             # ... but not directory contents, so delay removal.
             # Even if local inode is a directory, such cleanup is
             # required in case we want to rename from another path.
-            self.backup(path, True)
+            sync_parent = self.backup(path, True)
           elif (# ... non-directory so that directory can be created
                 fmt == stat.S_IFDIR if fmt != old_fmt
                 # and hardlinks of same type.
@@ -458,17 +460,18 @@ class Local(object):
             # from another path.
             sql("update fssync set inode=null, metadata=null where path=?",
                 (path,))
+            sync_parent = True
             self.rpc.remove(path)
             self.rpc.wait()
             sql("delete from fssync where path=?", (path,))
           elif path:
             logger.debug("let remote remove or reuse %r", path)
         else:
-          self.backup(path)
+          sync_parent = self.backup(path)
         r = None
       elif fmt != stat.S_IFDIR and self.non_empty(path, r.mode):
         # Non-empty directory replaced by non-directory with same inode.
-        self.backup(path, True)
+        sync_parent = self.backup(path, True)
       elif fmt != old_fmt:
         # Remote path will be automatically deleted and recreated.
         # If we get interrupted, remote file type will be unknown,
@@ -480,6 +483,7 @@ class Local(object):
       r = s
     if not r:
       # Current path does not exist on remote or can't be reused.
+      sync_parent = True
       # Let's see if local inode is the result of a rename or hardlink ...
       c = sql('select * from fssync where inode=?', (dumps(key, 2),))
       r = c.fetchone()
@@ -537,7 +541,10 @@ class Local(object):
       # Process contents before because this may alter permissions or
       # modification time.
       for name in children:
-        self.sync(os.path.join(path, name))
+        if self.sync(os.path.join(path, name)):
+          # Force update of metadata because synchronization of children
+          # changed the modification time on destination.
+          r = None
     value = s.value
     if not r or value != r.value:
       # The first RPC will automatically remove existing inode if its type
@@ -547,13 +554,13 @@ class Local(object):
           f = open(p, 'rb')
         except (FileNotFoundError, IsADirectoryError):
           if path:
-            return
+            return sync_parent
           raise
         try:
           s2 = os.fstat(f.fileno())
           if key != (self.dev_map.get(s2.st_dev, ()), s2.st_ino) \
              or not stat.S_ISREG(s2.st_mode):
-            return
+            return sync_parent
           checked = 0
           unchecked = s.size
           if getattr(r, 'size', 0) < unchecked:
@@ -595,10 +602,12 @@ class Local(object):
         self.rpc.symlink(path, target)
         self.rpc.wait()
       self.rpc.sync_meta(path, s) # creates the file/dir
-      self.rpc.wait()             # (and parents) automatically
+      if self.rpc.wait():         # (and parents) automatically
+        sync_parent = True
     # Do not use 'update' because we didn't insert anything if self.rpc is None.
     sql("insert or replace into fssync values (?, ?, ?, 1)",
         (path, dumps(key, 2), dumps(value, 2)))
+    return sync_parent
 
   def clean(self, path):
     sql = self.con.execute
@@ -796,6 +805,7 @@ class Remote(object):
     x = stat.S_IFMT(l.mode)
     mode = stat.S_IMODE(l.mode)
     size = l.size
+    sync_parent = False
     while 1:
       try:
         s = Stat(path)
@@ -806,6 +816,7 @@ class Remote(object):
         if x == stat.S_IFMT(s.mode):
           break
         self.remove(path)
+      sync_parent = True
       self._makeparents(path)
       if x == stat.S_IFDIR:
         os.mkdir(path, mode)
@@ -851,6 +862,7 @@ class Remote(object):
       if x:
         for attr, value in x.items():
           os.setxattr(path, attr, value, follow_symlinks=False)
+    return sync_parent
 
   def _makereg(self, path):
     try:
