@@ -642,19 +642,6 @@ class Local(object):
       for path in self.rpc.wait():
         yield path
 
-#  def update(self):
-#    path = ''
-#    while 1:
-#      for path, inode, metadata, _ in self.con.execute(
-#         'select * from fssync where ?<path and checked!=0 order by path',
-#         (path,)).fetchall():
-#        r = Stat.load(loads(inode), loads(metadata))
-#        if self.filter(path, r):
-#          self.clean(path)
-#          break
-#      else:
-#        break
-
 
 class Remote(object):
 
