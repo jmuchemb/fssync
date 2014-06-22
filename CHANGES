@@ -1,6 +1,20 @@
 Change History
 ==============
 
+1.2 (2014-06-24)
+----------------
+
+- The modification time of a directory could be wrongly left altered after
+  children were synchronized. This case happened when the source timestamp
+  was explicitly restored to its original value, in such way that fssync
+  thought metadata were the same on both sides.
+- All failures due to a missing inode on destination side should be fixed,
+  with a warning. If this inode was already visited, it is required to run
+  fssync again to restore. Of course, fssync should be the only process that
+  modifies destination which means such case should not happen, but it's simple
+  and safe to recover.
+- Default value of -R option is documented and fixed.
+
 1.1 (2014-03-10)
 ----------------
 

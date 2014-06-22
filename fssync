@@ -1003,7 +1003,7 @@ def main():
     _('-L', '--remote-logfile',
               help="Set '-l' option for remote end."),
     _('-R', '--remote-root',
-              help="Set '-r' option for remote end."),
+              help="Set '-r' option for remote end. Default to '-r' value."),
     _('-X', '--remote-executable',
               help="Path to fssync executable on remote side."
                    " If unset, it is guessed from the 0-th argument."),
