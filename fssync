@@ -367,7 +367,7 @@ class Local(object):
     try:
       for i, x in enumerate(parts):
         s = _lstat(x, dir_fd=fd)
-        while 1:
+        while True:
           if s.st_dev != self.root_dev:
             return _sep.join(parts[:i+1])
           if not stat.S_ISDIR(s.st_mode):
@@ -390,7 +390,7 @@ class Local(object):
   def sync(self, path):
     sql = self.con.execute
     p = os.path.join(self.root, path)
-    while 1:
+    while True:
       try:
         s = self.stat(p)
       except ( KeyError          # other filesystem
@@ -678,7 +678,7 @@ class Remote(object):
       del self._open_args, self._open_file
 
   def __call__(self, stdin, stdout):
-    while 1:
+    while True:
       try:
         method, args, kw = loads(read_rpc(stdin))
       except EOFError:
@@ -806,7 +806,7 @@ class Remote(object):
     mode = stat.S_IMODE(l.mode)
     size = l.size
     sync_parent = False
-    while 1:
+    while True:
       try:
         s = Stat(path)
       except FileNotFoundError:
