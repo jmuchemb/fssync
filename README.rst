@@ -192,9 +192,6 @@ BUGS/LIMITATIONS/TODO
    ownership with same uid/gid than on source (or with same user/group names if
    ``--map-users`` option is given).
 
-6. fssync does not resume synchronization of a new file. Should be fixed in a
-   future release.
-
 
 NOTES
 =====

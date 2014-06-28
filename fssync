@@ -563,7 +563,7 @@ class Local(object):
             return sync_parent
           checked = 0
           unchecked = s.size
-          if getattr(r, 'size', 0) < unchecked:
+          if (r and r.size or 0) < unchecked:
             sparse = s.blocks * 512 < unchecked
             if sparse or self.prealloc and BLOCK_SIZE < unchecked:
               self.rpc.truncate(path, unchecked, sparse)
@@ -575,6 +575,13 @@ class Local(object):
             remote_hash_list = self.rpc.wait()
             if not local_hash_list:
               break # local file truncated during check
+            if not r:
+              # This file is new. Make sure we won't have to restart from the
+              # beginning if we get interrupted, which can be really annoying
+              # for big files.
+              sql("insert or replace into fssync values (?, ?, ?, 0)",
+                  (path, dumps(key, 2), dumps(s.null_value, 2)))
+              r = True
             diff_list = []
             for i, h in enumerate(local_hash_list):
               if remote_hash_list[i] != h:
