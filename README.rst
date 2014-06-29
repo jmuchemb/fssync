@@ -181,8 +181,9 @@ BUGS/LIMITATIONS/TODO
 4. What is not synchronized:
 
    - access & change times: I won't implement it.
-   - inode flags (see ``chattr``\ (1) and ``lsattr``\ (1)): should be done, at
-     least partially.
+   - inode flags (see ``chattr``\ (1) and ``lsattr``\ (1)): some flags like
+     `C` or `c` are important on Btrfs so this could be a nice improvement, at
+     least if it was implemented partially.
    - file-system specific properties ?
 
 5. Add 2 options to map specific users or groups. You may want this if you get
@@ -191,6 +192,14 @@ BUGS/LIMITATIONS/TODO
    fssync as root, or configure security so that it is allowed to change
    ownership with same uid/gid than on source (or with same user/group names if
    ``--map-users`` option is given).
+
+6. Don't rely on permissions settings to prevent access to inodes on destination
+   side. This is because metadata are synchronized after data (in the case of a
+   directory, it means all inodes under this directory is synchronized before
+   its metadata) and in some cases, an attacker could access to sensitive data
+   while fssync is running. Access should be denied on a parent directory of
+   your destination tree (or at the root of this tree if you're careful enough
+   to keep it secure on source side).
 
 
 NOTES
