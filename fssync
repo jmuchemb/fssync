@@ -380,7 +380,7 @@ class Local(object):
             if ss == s:
               raise
             s = ss
-      fd_list.append(fd)
+        fd_list.append(fd)
     except FileNotFoundError:
       pass
     finally:
