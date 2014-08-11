@@ -15,11 +15,17 @@
 # You should have received a copy of the GNU General Public License
 # along with this program.  If not, see <http://www.gnu.org/licenses/>.
 
-import errno, os, random, shutil, stat, tempfile, types, unittest
+import errno, logging, os, random, shutil, stat, tempfile, types, unittest
 from collections import defaultdict, deque
 fssync = types.ModuleType('fssync')
 exec(compile(open('fssync').read(), os.path.realpath('fssync'), 'exec'),
      fssync.__dict__)
+
+logger = fssync.logger
+def setLevel(level=logging.DEBUG):
+  for x in logging.lastResort, logger:
+    x.setLevel(level)
+#setLevel()  # uncomment to enable all logs
 
 # XXX: http://braawi.org/genbackupdata/ (packaged by Debian) may help.
 
@@ -83,6 +89,11 @@ class DummyRpcClient(object):
     self.called[name] += 1
     if isinstance(args[0], bytes):
       args = (os.path.join(self.remote.root, args[0]),) + args[1:]
+    if len(args) > 1 and (args[1] is None or
+      isinstance(args[1], (int, bytes))):
+      logger.debug('%s(%r, %r)', name, args[0], args[1])
+    else:
+      logger.debug('%s(%r)', name, args[0])
     return getattr(self.remote, name)(*args, **kw)
 
   def __getattr__(self, name):
