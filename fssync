@@ -24,6 +24,7 @@ from pickle import dumps, loads
 from urllib.parse import splitport
 from posix1e import ACL, ACL_USER, ACL_GROUP, delete_default, Entry, Permset
 
+PROTOCOL_VERSION = 1
 BLOCK_SIZE = 4096
 PART_SIZE = BLOCK_SIZE * 256
 
@@ -1016,7 +1017,7 @@ def main():
   parser = argparse.ArgumentParser(
     description="File system synchronization tool")
   _ = parser.add_argument
-  _('--remote', action='store_true',
+  _('--remote', type=int, metavar="VERSION",
               help="Used on the remote host to process RPC from local host.")
   _('-l', '--logfile',
               help="Output logging messages to specified file. If unset,"
@@ -1102,6 +1103,9 @@ def main():
   signal.signal(signal.SIGTERM, lambda *args: sys.exit())
 
   if args.remote:
+    if args.remote != PROTOCOL_VERSION:
+      sys.exit('Wrong protocol: make sure you have same version of fssync'
+               ' on both sides.')
     for a in local_options:
       v = getattr(args, a.dest)
       if v is a.const if a.nargs == 0 else v is not None:
@@ -1124,7 +1128,7 @@ def main():
     if args.host == '-':
       rpc = None
     else:
-      opt = ['--remote', '-r', args.remote_root]
+      opt = ['--remote', str(PROTOCOL_VERSION), '-r', args.remote_root]
       if args.remote_logfile:
         opt += '-l', args.remote_logfile
       if args.verbose:
