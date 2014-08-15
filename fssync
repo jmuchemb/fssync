@@ -322,7 +322,7 @@ class Local(object):
     try:
       self.rpc.wait()
     except FileNotFoundError:
-      logger.warning("missing %r on desination side", path)
+      logger.warning("missing %r on destination side", path)
       self.con.execute("delete from fssync where path=?", (backup,))
       backup = None
     self.rename(path, backup, null_key)

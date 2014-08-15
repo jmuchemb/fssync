@@ -29,8 +29,10 @@ def my_filter(root, p, s):
         '.rnd',
         '.Xauthority',
         '.xsession-errors',
-      ) or p[:12] == '.DCOPserver_' \
-        or p[:13] == '.fonts.cache-'
+      ) or p.startswith((
+        '.DCOPserver_',
+        '.fonts.cache-',
+      ))
     return p == 'dead.letter'
   else:
     try:

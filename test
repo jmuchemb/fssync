@@ -15,9 +15,9 @@
 # You should have received a copy of the GNU General Public License
 # along with this program.  If not, see <http://www.gnu.org/licenses/>.
 
-import errno, imp, os, random, shutil, stat, tempfile, unittest
+import errno, os, random, shutil, stat, tempfile, types, unittest
 from collections import defaultdict, deque
-fssync = imp.new_module('fssync')
+fssync = types.ModuleType('fssync')
 exec(compile(open('fssync').read(), os.path.realpath('fssync'), 'exec'),
      fssync.__dict__)
 
