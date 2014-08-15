@@ -326,7 +326,13 @@ class Local(object):
       self.con.execute("delete from fssync where path=?", (backup,))
       backup = None
     self.rename(path, backup, null_key)
-    return backup
+
+  def remove(self, path):
+    sql = self.con.execute
+    sql("update fssync set inode=null, metadata=null where path=?", (path,))
+    self.rpc.remove(path)
+    self.rpc.wait()
+    sql("delete from fssync where path=?", (path,))
 
   def filter(self, path, stat):
     pass
@@ -430,18 +436,29 @@ class Local(object):
               return
           raise
       break
+    # When creating a new inode, we must make sure we don't reuse one that
+    # already has hardlinks. In below code, this is done in 2 places.
     sync_parent = False
-    r = sql('select * from fssync where path=?', (path,)).fetchall()
-    if r:
-      (_, inode, metadata, checked), = r
-      if checked:
-        return
-      # Path already exists on remote and needs to be synchronized.
-      old_key = loads(inode)
-      r = Stat.load(old_key, loads(metadata))
-      old_fmt = stat.S_IFMT(r.mode)
-      if old_key != key:
-        # Local inode has changed.
+    value = s.value
+    inode = dumps(key, 2)
+    same_key_rows = sql('select * from fssync where inode=?',
+                        (inode,)).fetchall()
+    for same_key in same_key_rows:
+      if same_key[0] == path:
+        if same_key[3]: # checked
+          return
+        r = True
+        break
+    else:
+      r = sql('select * from fssync where path=?', (path,)).fetchall()
+      if r:
+        (_, inode, metadata, checked), = r
+        if checked:
+          # We got interrupted and FS changed. We'll sync at a next time.
+          return
+        old_key = loads(inode)
+        r = Stat.load(old_key, loads(metadata))
+        old_fmt = stat.S_IFMT(r.mode)
         if old_key == Stat.NULL_KEY or \
            sql('select path from fssync where inode=? and path!=?',
                (dumps(old_key, 2), path)).fetchone():
@@ -450,93 +467,100 @@ class Local(object):
             # ... but not directory contents, so delay removal.
             # Even if local inode is a directory, such cleanup is
             # required in case we want to rename from another path.
-            sync_parent = self.backup(path, True)
-          elif (# ... non-directory so that directory can be created
-                fmt == stat.S_IFDIR if fmt != old_fmt
-                # and hardlinks of same type.
-                else old_key != Stat.NULL_KEY):
-            # All other cases are handled by remote, which removes existing
-            # inode automatically if its type differs or if we hardlink/rename
-            # from another path.
-            sql("update fssync set inode=null, metadata=null where path=?",
-                (path,))
-            sync_parent = True
-            self.rpc.remove(path)
-            self.rpc.wait()
-            sql("delete from fssync where path=?", (path,))
+            self.backup(path, True)
+          elif (# ... hardlinks of same type
+                fmt == old_fmt or
+                # and non-directory so that directory can be created.
+                fmt == stat.S_IFDIR):
+            # 1st case of non-reusable inode.
+            # No need to backup because the old inode is either marked for
+            # deletion or reachable via another path.
+            self.remove(path)
           elif path:
-            logger.debug("let remote remove or reuse %r", path)
+            # Nothing to do here. It was not a directory and type differs so
+            # it'll be deleted first automatically and we can avoid 1 RPC.
+            logger.debug("let remote remove %r", path)
         else:
-          sync_parent = self.backup(path)
+          self.backup(path)
         r = None
-      elif fmt != stat.S_IFDIR and self.non_empty(path, r.mode):
-        # Non-empty directory replaced by non-directory with same inode.
-        sync_parent = self.backup(path, True)
-      elif fmt != old_fmt:
-        # Remote path will be automatically deleted and recreated.
-        # If we get interrupted, remote file type will be unknown,
-        # and we'll need to ask remote during recovery.
-        sql("update fssync set metadata=? where path=?",
-            (self.NULL_VALUE, path))
-    elif self.rpc is None:
-      # Assume remote is already up-to-date.
-      r = s
-    if not r:
-      # Current path does not exist on remote or can't be reused.
-      sync_parent = True
-      # Let's see if local inode is the result of a rename or hardlink ...
-      c = sql('select * from fssync where inode=?', (dumps(key, 2),))
-      r = c.fetchone()
-      while r:
-        backup, inode, metadata, checked = r
-        if not checked:
-          sub_root = self.is_masked(backup)
-          if sub_root:
-            sys.exit(
-              "Can not synchronize %r because %r has/had same inode."
-              " %r must be unmounted first (if it's not a mount point,"
-              " e.g. a subvolume, then move it temporarily outside %r)."
-              % tuple(decode(x) for x in (path, backup, sub_root, self.root)))
-        r = Stat.load(loads(inode), loads(metadata))
-        if fmt == stat.S_IFMT(r.mode):
-          # ... probably (type is the same) so reuse it.
-          # Fetch remaining rows before we do any SQL change.
-          # I don't know if this is required by SQLite but
-          # http://bugs.python.org/issue10513 does not leave me the choice.
-          c = iter(c.fetchall())
+      elif self.rpc is None:
+        # Assume remote is already up-to-date.
+        r = s
+        same_key_rows = None
+    if same_key_rows:
+      x = Stat.load(key, loads(same_key[2]))
+      old_fmt = stat.S_IFMT(x.mode)
+      if fmt == stat.S_IFLNK == old_fmt and value != x.value:
+        # Unfortunately, symlinks can't be edited.
+        for same_key in same_key_rows:
+          self.rpc.readlink(same_key[0])
+          try:
+            if self.rpc.wait() != target:
+              old_fmt = None
+            else:
+              target = None
+            break
+          except FileNotFoundError:
+            pass
+        else:
+          r = old_fmt = None
+      if fmt != old_fmt:
+        # Inode of different type but same number. Mark remote for deletion.
+        sql("update fssync set inode=? where inode=?", (self.NULL_KEY, inode))
+        if r:
+          # Wow, even the path is the same.
+          # This the 2nd place of non-reusable inode, so delete it now.
+          (self.backup if self.non_empty(path, old_fmt or 0) else
+           self.remove)(path)
+          r = None
+      elif r:
+        # Most common case (inode not touched or only edited).
+        r = x
+      else:
+        # Inode is the result of a rename or hardlink.
+        sync_parent = True
+        for backup, inode, metadata, checked in same_key_rows:
+          if not checked:
+            sub_root = self.is_masked(backup)
+            if sub_root:
+              sys.exit(
+                "Can not synchronize %r because %r has/had same inode."
+                " %r must be unmounted first (if it's not a mount point,"
+                " e.g. a subvolume, then move it temporarily outside %r)."
+                % tuple(decode(x) for x in (path, backup, sub_root, self.root)))
           # If we get interrupted, recovery phase must revert hardlink/rename.
           sql("insert or replace into fssync values (?, ?, null, 0)",
               (path, backup))
-          # If target already exists (and is not a non-empty directory),
-          # it will be automatically deleted first.
           try:
-            while True:
-              try:
-                if fmt == stat.S_IFDIR:
-                  self.rpc.rename(backup, path)
-                  self.rpc.wait()
-                  self.rename(backup, path)
-                else:
-                  self.rpc.link(backup, path)
-                  self.rpc.wait()
-                  sql("update fssync set inode=?, metadata=? where path=?",
-                      (inode, metadata, path))
-                break
-              except FileNotFoundError:
-                logger.warning("missing %r on destination side", backup)
-                self.rename(backup, None)
-                # Maybe there's another hardlink to try.
-                backup = next(c)[0]
+            if fmt == stat.S_IFDIR:
+              self.rpc.rename(backup, path)
+              self.rpc.wait()
+              self.rename(backup, path)
+            else:
+              self.rpc.link(backup, path)
+              self.rpc.wait()
+              sql("update fssync set inode=?, metadata=? where path=?",
+                  (inode, metadata, path))
+            r = x
             break
-          except StopIteration:
+          except FileNotFoundError:
+            logger.warning("missing %r on destination side", backup)
+            self.rename(backup, None)
+        else:
             # All hardlinks are missing on remote, so create new.
             logger.warning("... create new inode for %r", path)
-        r = None
-      else:
-        # If an error happens before the final SQL "update", and path disappears
-        # before next sync, then we want to be sure it'll be removed on remote.
-        sql("insert or replace into fssync values (?, ?, ?, 0)",
-            (path, self.NULL_KEY, dumps(s.null_value, 2)))
+
+    if not r:
+      # At this point, it is possible that the parent directory hasn't been
+      # touched on destination side and we don't do it because the file has
+      # disappeared locally. This happens rarely enough to be an issue.
+      # What's important is that sync_parent is never False when it shouldn't
+      # and we prefer to keep the code simple enough.
+      sync_parent = True
+      # If an error happens before the final SQL "update", and path disappears
+      # before next sync, then we want to be sure it'll be removed on remote.
+      sql("insert or replace into fssync values (?, ?, ?, 0)",
+          (path, self.NULL_KEY, dumps(s.null_value, 2)))
     if fmt == stat.S_IFDIR:
       # Process contents before because this may alter permissions or
       # modification time.
@@ -545,10 +569,7 @@ class Local(object):
           # Force update of metadata because synchronization of children
           # changed the modification time on destination.
           r = None
-    value = s.value
     if not r or value != r.value:
-      # The first RPC will automatically remove existing inode if its type
-      # differs. It will only fail if it tries to remove a non-empty directory.
       if fmt == stat.S_IFREG:
         try:
           f = open(p, 'rb')
@@ -605,7 +626,8 @@ class Local(object):
             self.rpc.wait()
         finally:
           f.close()
-      elif fmt == stat.S_IFLNK:
+      elif fmt == stat.S_IFLNK and target:
+        assert sync_parent, path
         self.rpc.symlink(path, target)
         self.rpc.wait()
       self.rpc.sync_meta(path, s) # creates the file/dir
@@ -765,6 +787,8 @@ class Remote(object):
       (os.rmdir if self.isdir(path) else os.remove)(path)
     except FileNotFoundError:
       pass
+
+  readlink = staticmethod(os.readlink)
 
   def link(self, path, new_path):
     new_path = os.path.join(self.root, new_path)
