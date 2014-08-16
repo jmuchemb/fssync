@@ -810,6 +810,9 @@ class Remote(object):
 
   def sync_meta(self, path, l):
     x = stat.S_IFMT(l.mode)
+    if x == stat.S_IFREG:
+      # Close before using Stat, otherwise s.mtime_ns will be wrong.
+      self._close()
     mode = stat.S_IMODE(l.mode)
     size = l.size
     sync_parent = False
@@ -832,7 +835,6 @@ class Remote(object):
       else:
         os.mknod(path, l.mode, l.rdev)
     if x == stat.S_IFREG:
-      self._close()
       if size < s.size or size <= s.blocks * 512 - s.blksize:
         # l.size > s.size implies that local file was truncated during sync:
         # we don't want the backup to become sparse and next run will fix this
@@ -848,6 +850,7 @@ class Remote(object):
           # Do it twice if we don't reduce file size,
           # to force FS to free extra space.
           os.truncate(path, size)
+        s.mtime_ns = None # force update of modification time
     acl = self.map_acl(l.acl and l.acl[0])
     if acl != (s.acl and s.acl[0]):
         (load_acl(acl) if acl else ACL(mode=mode)).applyto(path)
