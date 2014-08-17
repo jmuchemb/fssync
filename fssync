@@ -960,6 +960,8 @@ class Remote(object):
       l = Stat.load(Stat.NULL_KEY, metadata)
       l.uid = self._pwd(l.uid)
       l.gid = self._grp(l.gid)
+      if l.acl:
+        l.acl = self.map_acl(l.acl[0]), self.map_acl(l.acl[1])
       try:
         s = Stat(os.path.join(self.root, path))
         metadata = s.value
