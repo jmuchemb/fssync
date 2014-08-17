@@ -164,7 +164,7 @@ class Stat(object):
 
   @classmethod
   def load(cls, key, value):
-    self = object.__new__(cls)
+    self = cls.__new__(cls)
     for k, v in zip(self.__slots__, key + value):
       setattr(self, k, v)
     return self
@@ -669,19 +669,32 @@ class Local(object):
     else:
       args = ()
       path = ""
-    fetchone = self.con.execute("select path, metadata from fssync "
-                                + path + " order by path", args).fetchone
+    sql = self.con.execute
+    fetchone = sql("select path, inode, metadata from fssync "
+                   + path + " order by path", args).fetchone
+    s = Stat.__new__(Stat)
     while True:
       row_list = []
       try:
         for x in range(100):
-          path, metadata = fetchone()
-          row_list.append((path, loads(metadata)))
+          path, inode, metadata = fetchone()
+          row_list.append((path, loads(inode), loads(metadata)))
       except TypeError:
         if not row_list:
           break
       self.rpc.check(row_list)
-      for path in self.rpc.wait():
+      for path, metadata in self.rpc.wait():
+        if type(metadata) is tuple:
+          s = Stat.load(Stat.NULL_KEY, metadata)
+          s.gid = s.uid = s.acl = None
+          sql("update fssync set metadata=? where path=?",
+              (dumps(s.value, 2), path))
+        elif metadata:
+          s.mode = metadata
+          sql("update fssync set inode=?, metadata=? where path=?",
+              (self.NULL_KEY, dumps(s.value, 2), path))
+        else:
+          sql("delete from fssync where path=?", (path,))
         yield path
 
 
@@ -956,20 +969,33 @@ class Remote(object):
 
   def check(self, item_list):
     path_list = []
-    for path, metadata in item_list:
-      l = Stat.load(Stat.NULL_KEY, metadata)
+    inode_map = {}
+    inodes = set()
+    for path, inode, metadata in item_list:
+      l = Stat.load(inode, metadata)
       l.uid = self._pwd(l.uid)
       l.gid = self._grp(l.gid)
       if l.acl:
         l.acl = self.map_acl(l.acl[0]), self.map_acl(l.acl[1])
       try:
         s = Stat(os.path.join(self.root, path))
-        metadata = s.value
+        key = s.key
+        if inode_map.get(inode) != key if key in inodes else inode in inode_map:
+          metadata = stat.S_IFMT(s.mode)
+        else:
+          inode_map[inode] = key
+          inodes.add(key)
+          metadata = s.value
       except FileNotFoundError:
         metadata = None
       if l.value != metadata:
-        logger.warning("%s: DB %r differs from FS %r", path, l.value, metadata)
-        path_list.append(path)
+        if type(metadata) is tuple:
+          logger.warning("%s: DB %r differs from FS %r",
+                         path, l.value, metadata)
+        else:
+          logger.warning("%s: wrong hardlink" if metadata else "%s: missing",
+                         path)
+        path_list.append((path, metadata))
     return path_list
 
 class SysLogHandler(logging.handlers.SysLogHandler):
@@ -1021,9 +1047,10 @@ def main():
                    " prevent files from being compressed on Btrfs."),
     _('-c', '--check', action='store_true',
               help="Check database matches remote host, instead of"
-                   " synchronizing. This does not check file contents,"
-                   " symlink target and hardlinks."
-                   " -a/-f have no effect with this option."),
+                   " synchronizing. This does not check file contents and"
+                   " symlink targets. Database is updated to reflect what's"
+                   " on destination: then run fssync again without this option"
+                   " to fix errors. -a/-f have no effect with this option."),
     _('-d', '--db',
               help="File path to database that maintains"
                    " the state of files on the remote side."),
