@@ -40,7 +40,7 @@ class Stat(fssync.Stat):
     if self.key in self._fake_dev:
       self.dev += 1
     try:
-      self.ino = self._fake_ino[path]
+      self.ino = self._fake_ino[self.ino]
     except KeyError:
       pass
 
@@ -60,7 +60,7 @@ class Stat(fssync.Stat):
     if ino is None:
       # negative number to not conflict with real inodes
       cls._last_ino = ino = cls._last_ino - 1
-    cls._fake_ino[os.path.realpath(path)] = ino
+    cls._fake_ino[os.lstat(path).st_ino] = ino
     return ino
 
   @classmethod
@@ -69,10 +69,17 @@ class Stat(fssync.Stat):
     cls._last_ino = 0
 
   @classmethod
+  def _xstat(cls, s):
+    if (s.st_dev, s.st_ino) in cls._fake_dev:
+      return type(s)(s[:2] + (-1,) + s[3:])
+    try:
+      return type(s)(s[:1] + (cls._fake_ino[s.st_ino],) + s[2:])
+    except KeyError:
+      return s
+
+  @classmethod
   def _lstat(cls, name, **kw):
-    s = os.lstat(name, **kw)
-    return type(s)(s[:2] + (-1,) + s[3:]) \
-      if (s.st_dev, s.st_ino) in cls._fake_dev else s
+    return cls._xstat(os.lstat(name, **kw))
 
 fssync.Stat = Stat
 
@@ -141,14 +148,17 @@ def gen_data(size, __blob=bytes(int(random.gauss(0, .8)) % 256
 
 class Test(unittest.TestCase):
 
+  os_fstat = staticmethod(os.fstat)
   os_listdir = staticmethod(os.listdir)
 
   def setUp(self):
     self.fssync = Local()
     os.chdir(self.fssync.root)
+    os.fstat = lambda fd: Stat._xstat(self.os_fstat(fd))
     os.listdir = lambda p: sorted(self.os_listdir(p))
 
   def tearDown(self):
+    os.fstat = self.os_fstat
     os.listdir = self.os_listdir
     del self.fssync
 
@@ -165,26 +175,29 @@ class Test(unittest.TestCase):
     isdir = os.path.isdir
     join = os.path.join
     dst_root = self.fssync.remote.root
-    for src, names, files in os.walk(b'.'):
-      dst = dst_root + src[1:]
-      names = set(names).union(files)
-      self.assertEqual(names, set(os.listdir(dst)))
-      for name in names:
-        src_path = join(src, name)
-        dst_path = join(dst, name)
-        s = Stat(src_path)
-        try:
-          d = Stat(dst_path)
-        except FileNotFoundError as e:
-          self.fail(str(e))
-        self.assertEqual(s.value, d.value, name)
-        fmt = stat.S_IFMT(s.mode)
-        if fmt == stat.S_IFLNK:
-          self.assertEqual(os.readlink(src_path), os.readlink(dst_path), name)
-        elif fmt == stat.S_IFREG:
-          with open(src_path, 'rb') as s:
-            with open(dst_path, 'rb') as d:
-              self.assertEqual(s.read(), d.read(), name)
+    src = {}
+    dst = {}
+    for inodes, root in (src, b'.'), (dst, self.fssync.remote.root):
+      n = len(root) + 1
+      for r, dirs, files in os.walk(root):
+        for names in dirs, files:
+          for name in names:
+            p = join(r, name)
+            s = Stat(p)
+            fmt = stat.S_IFMT(s.mode)
+            if fmt == stat.S_IFLNK:
+              data = os.readlink(p)
+            elif fmt == stat.S_IFREG:
+              with open(p, 'rb') as f:
+                data = f.read()
+            else:
+              data = None
+            try:
+              inodes[s.key] += p[n:],
+            except KeyError:
+              inodes[s.key] = s.value, data, p[n:]
+    kw = {'key': lambda x: x[2:]}
+    self.assertListEqual(sorted(src.values(), **kw), sorted(dst.values(), **kw))
 
   def assertNotSynced(self):
     self.assertRaises(self.failureException, self.assertSynced)
@@ -192,6 +205,9 @@ class Test(unittest.TestCase):
   @property
   def called(self):
     return self.fssync.rpc.called
+
+  def assertCalled(self, **kw):
+    self.assertDictEqual(self.called, kw)
 
   def sync(self, clean=True, synced=True):
     self.fssync.sync(b'')
@@ -211,52 +227,86 @@ class Test(unittest.TestCase):
 
     self.called.clear()
     self.sync()
-    self.assertFalse(self.called)
+    self.assertCalled()
 
-    os.rename(b'a', b'b')
+    os.rename('a', 'b')
     self.assertNotSynced()
     self.sync()
-    self.assertEqual(self.called, dict(rename=1, sync_meta=1))
+    self.assertCalled(rename=1, sync_meta=1)
 
     self.called.clear()
-    os.rename(b'b', b'c')
-    Stat.set_ino(b'c')
+    os.rename('b', 'c')
+    Stat.set_ino('c')
     self.sync()
     self.assertEqual(sorted(self.called), ['link', 'removemany',
                                            'rename', 'sync_meta'])
 
   def test2(self):
-    self.mkreg(b'a')
-    os.mkdir(b'b')
-    os.link(b'a', b'b/c')
+    self.mkreg('a')
+    os.mkdir('b')
+    os.link('a', 'b/c')
     self.sync()
-    self.assertEqual(self.called, dict(link=1, sync_meta=3))
+    self.assertCalled(link=1, sync_meta=3)
 
     self.called.clear()
-    Stat.fake_dev(b'b')
+    Stat.fake_dev('b')
     self.sync()
 
-    os.rename(b'a', b'c')
+    os.rename('a', 'c')
     self.assertRaises(SystemExit, self.sync)
-    self.assertFalse(self.called)
+    self.assertCalled()
 
-    Stat.reset_dev(b'b')
+    Stat.reset_dev('b')
     self.sync()
-    self.assertEqual(self.called, dict(link=1, removemany=1, sync_meta=1))
+    self.assertCalled(link=1, removemany=1, sync_meta=1)
 
     self.called.clear()
-    os.link(b'c', b'd')
+    os.link('c', 'd')
     self.fssync.remote.removemany([b'b/c'])
     self.sync(synced=False)
     self.sync()
-    self.assertEqual(self.called, dict(link=3, sync_meta=2))
+    self.assertCalled(link=3, sync_meta=2)
 
     self.called.clear()
-    os.rename(b'b', b'a')
+    os.rename('b', 'a')
     shutil.rmtree(self.fssync.remote.root + b'/b')
     self.sync()
-    self.assertEqual(self.called, dict(link=1, rename=1, sync_meta=2))
+    self.assertCalled(link=1, rename=1, sync_meta=2)
 
+    i = Stat.set_ino('c')
+    self.sync()
+
+    self.called.clear()
+    for x in 'a/c', 'c', 'd':
+      os.remove(x)
+    os.symlink('.', 'c')
+    os.link('c', 'd')
+    Stat.set_ino('c', i)
+    self.sync()
+    self.assertCalled(link=1, remove=1, removemany=1, symlink=1, sync_meta=3)
+
+    self.called.clear()
+    os.remove('c')
+    os.remove('d')
+    os.symlink('..', 'c')
+    os.link('c', 'd')
+    Stat.set_ino('c', i)
+    os.symlink('.', 'a/a')
+    self.sync()
+    self.assertCalled(link=1, readlink=1, remove=2, symlink=2, sync_meta=4)
+
+    self.called.clear()
+    os.rename('c', 'a/c')
+    for x in '.', 'a', 'a/a', 'a/c':
+      os.utime(x, (1, 1), follow_symlinks=False)
+    self.sync()
+    self.assertCalled(link=1, readlink=3, removemany=1, sync_meta=5)
+
+    self.called.clear()
+    self.mkreg('a/b', 1)
+    os.utime('a', (1, 1))
+    self.sync()
+    self.assertCalled(check_data=1, sync_data=1, sync_meta=2)
 
 if __name__ == '__main__':
   unittest.main()
