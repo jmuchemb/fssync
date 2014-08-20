@@ -1,6 +1,33 @@
 Change History
 ==============
 
+1.3 (2014-08-20)
+----------------
+
+This version fixes few bugs related to hardlinks, symlinks and timestamps.
+Unless you only use fssync for regular files and directories, it is advised
+to use --check option.
+
+- --check option has been improved to check hardlinks and acls. It now also
+  update the database so that next synchronization fixes all found errors.
+  In order words, it now checks all metadata (and only that).
+- In some cases, fssync failed to hardlink a new inode and instead created
+  different inodes on destination. This could happen when all hardlinks of an
+  old inode I were deleted and the new inode of different type was created with
+  same number I and hardlinked multiple times.
+- Symlinks to different targets were treated as being of same type. Although
+  they are, in practice this is wrong because the kernel does not provide any
+  way to edit the target without deleting it first. A related bug was that
+  modification time of parent directory was not always checked.
+- Itime for regular files
+
+Other changes:
+
+- fssync now checks that local and remote speak same protocol, so that users
+  do not run versions that differ too much on both sides.
+- fssync learned to resume synchronization of new files.
+- A file descriptor leak when handling hardlinks/renames has been fixed.
+
 1.2 (2014-06-24)
 ----------------
 
