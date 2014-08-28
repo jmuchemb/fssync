@@ -163,8 +163,7 @@ BUGS/LIMITATIONS/TODO
    If the DB is not corrupted and you don't want to rebuild it, you can try
    to update it by running fssync again as soon as possible, so that the same
    changes are replayed. fssync should be able to detect that all remote
-   operations are already performed. See also ``-c`` option, with does some
-   partial checking.
+   operations are already performed. See also ``-c`` and ``-F`` options.
 
 2. fssync should not trash the page cache by using ``posix_fadvise``\ (2).
    Unfortunately, Linux does not implement ``POSIX_FADV_NOREUSE`` yet (see

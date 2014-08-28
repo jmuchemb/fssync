@@ -267,12 +267,13 @@ class Local(object):
     self.con.close()
 
   def __call__(self, filter=None, path_list=None, check=False, print0=False,
-               prealloc=False):
+               prealloc=False, force=False):
     print = print0 and (self.rpc.print if type(self.rpc) is RpcClient # XXX
                                        else sys.stdout.buffer.write)
     if filter:
       self.set_filter(eval(filter, globals(), {}), print)
     self.prealloc = prealloc
+    self.force = force
     self.rollback()
     for p in path_list or (b'',):
       if check:
@@ -491,7 +492,7 @@ class Local(object):
     if same_key_rows:
       x = Stat.load(key, loads(same_key[2]))
       old_fmt = stat.S_IFMT(x.mode)
-      if fmt == stat.S_IFLNK == old_fmt and value != x.value:
+      if fmt == stat.S_IFLNK == old_fmt and (value != x.value or self.force):
         # Unfortunately, symlinks can't be edited.
         for same_key in same_key_rows:
           self.rpc.readlink(same_key[0])
@@ -505,6 +506,8 @@ class Local(object):
             pass
         else:
           r = old_fmt = None
+        if value == x.value and target:
+          logger.info("--force: syncing target of %r", path)
       if fmt != old_fmt:
         # Inode of different type but same number. Mark remote for deletion.
         sql("update fssync set inode=? where inode=?", (self.NULL_KEY, inode))
@@ -570,7 +573,8 @@ class Local(object):
           # Force update of metadata because synchronization of children
           # changed the modification time on destination.
           r = None
-    if not r or value != r.value:
+    same = r and value == r.value
+    if not same or self.force and fmt == stat.S_IFREG:
       if fmt == stat.S_IFREG:
         try:
           f = open(p, 'rb')
@@ -613,9 +617,14 @@ class Local(object):
               unchecked -= BLOCK_SIZE
             if diff_list:
               self.rpc.sync_data(path, diff_list)
+              if same:
+                logger.info("--force: syncing data of %r", path)
+                same = False
               self.rpc.wait()
             f.seek(checked)
         except IndexError: # remote file is smaller
+          if same:
+            logger.info("--force: syncing data of %r", path)
           if diff_list:
             self.rpc.sync_data(path, diff_list)
             self.rpc.wait()
@@ -1047,11 +1056,12 @@ def main():
                    " non-sparse files. This reduces disk fragmentation but"
                    " prevent files from being compressed on Btrfs."),
     _('-c', '--check', action='store_true',
-              help="Check database matches remote host, instead of"
-                   " synchronizing. This does not check file contents and"
-                   " symlink targets. Database is updated to reflect what's"
-                   " on destination: then run fssync again without this option"
-                   " to fix errors. -a/-f have no effect with this option."),
+              help="Check that database matches what's on destination side:"
+                   " database is fixed if there's any difference. Note however"
+                   " it does not search for destination inodes that are not"
+                   " in the database. You can then run fssync again without"
+                   " this option to fix errors, optionally with --force."
+                   " -a/-f have no effect with this option."),
     _('-d', '--db',
               help="File path to database that maintains"
                    " the state of files on the remote side."),
@@ -1060,6 +1070,12 @@ def main():
                    " which takes 3 arguments (root, p, s) and returns"
                    " True if 'root/p' must be ignored. 's' holds some"
                    " stats about 'root/p': see 'Stat' class."),
+    _('-F', '--force', action='store_true',
+              help="Check data (including symlink targets) on destination even"
+                   " if metadata don't differ between source and database."
+                   " An INFO log is output if data differ between source and"
+                   " destination. --check should be used first if you suspect"
+                   " any difference."),
     _('-m', '--map-users', action='store_true',
               help="Map uid/gid, including in ACLs, so that names don't change"
                    " between local and remote hosts. This requires remote to"
@@ -1124,6 +1140,8 @@ def main():
           'filter', 'remote_logfile')):
         parser.error('empty or missing %s argument' %
           ('/'.join(a.option_strings) or a.dest))
+    if args.check and args.force:
+      parser.error("conflicting options --check and --force")
 
     if args.host == '-':
       rpc = None
@@ -1136,7 +1154,8 @@ def main():
       rpc = RpcSshClient(args.host,
         format_command(args.remote_executable, *opt),
         args.map_users and not args.reverse)
-    action = args.filter, args.path, args.check, args.print0, args.allocate
+    action = (args.filter, args.path, args.check,
+              args.print0, args.allocate, args.force)
     if args.reverse:
       if rpc is None:
         parser.error("conflicting options --reverse and HOST=-")

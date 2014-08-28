@@ -112,6 +112,7 @@ class DummyRpcClient(object):
 
 class Local(fssync.Local):
 
+  force = False
   prealloc = True
 
   def __init__(self):
@@ -167,7 +168,8 @@ class Test(unittest.TestCase):
     if d and not os.path.exists(d):
       os.makedirs(d)
     with open(path, 'wb') as f:
-      f.write(gen_data(size))
+      if size:
+        f.write(gen_data(size) if isinstance(size, int) else size)
     if mode is not None:
       os.chmod(path, mode)
 
@@ -292,6 +294,7 @@ class Test(unittest.TestCase):
     os.link('c', 'd')
     Stat.set_ino('c', i)
     os.symlink('.', 'a/a')
+    i = Stat.set_ino('a/a')
     self.sync()
     self.assertCalled(link=1, readlink=1, remove=2, symlink=2, sync_meta=4)
 
@@ -303,10 +306,37 @@ class Test(unittest.TestCase):
     self.assertCalled(link=1, readlink=3, removemany=1, sync_meta=5)
 
     self.called.clear()
-    self.mkreg('a/b', 1)
-    os.utime('a', (1, 1))
+    self.mkreg('a/b', b'foo')
+    for x in 'a', 'a/b':
+      os.utime(x, (1, 1))
     self.sync()
     self.assertCalled(check_data=1, sync_data=1, sync_meta=2)
+
+    # Check --force for regular files ...
+    self.called.clear()
+    with open('a/b', 'wb') as f:
+      f.write(b'bar')
+    os.utime('a/b', (1, 1))
+    self.sync(synced=False)
+    self.assertCalled()
+
+    self.fssync.force = True
+    self.sync()
+    del self.fssync.force
+    self.assertCalled(check_data=1, readlink=3, sync_data=1, sync_meta=1)
+
+    # ... and symlinks
+    os.remove('a/a')
+    os.symlink('b', 'a/a')
+    os.utime('a/a', (1, 1), follow_symlinks=False)
+    Stat.set_ino('a/a', i)
+    self.sync(synced=False)
+    self.called.clear()
+    self.fssync.force = True
+    self.sync()
+    del self.fssync.force
+    self.assertCalled(check_data=1, readlink=3,
+                      remove=1, symlink=1, sync_meta=3)
 
 if __name__ == '__main__':
   unittest.main()

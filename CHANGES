@@ -9,7 +9,7 @@ Unless you only use fssync for regular files and directories, it is advised
 to use --check option.
 
 - --check option has been improved to check hardlinks and acls. It now also
-  update the database so that next synchronization fixes all found errors.
+  updates the database so that next synchronization fixes all found errors.
   In order words, it now checks all metadata (and only that).
 - In some cases, fssync failed to hardlink a new inode and instead created
   different inodes on destination. This could happen when all hardlinks of an
