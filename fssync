@@ -184,8 +184,11 @@ class RpcClient(object):
       raise r
     return r
 
+  def send(self, value):
+    write_rpc(self.stdout, dumps(value))
+
   def __getattr__(self, name):
-    send = lambda rpc: write_rpc(self.stdout, dumps(rpc))
+    send = self.send
     if name in ('check', 'print', 'reverse'):
       if name == 'check':
         self.sync_meta # send pwd_grp if not done yet
@@ -683,6 +686,7 @@ class Local(object):
     fetchone = sql("select path, inode, metadata from fssync "
                    + path + " order by path", args).fetchone
     s = Stat.__new__(Stat)
+    self.rpc.check()
     while True:
       row_list = []
       try:
@@ -692,7 +696,7 @@ class Local(object):
       except TypeError:
         if not row_list:
           break
-      self.rpc.check(row_list)
+      self.rpc.send(row_list)
       for path, metadata in self.rpc.wait():
         if type(metadata) is tuple:
           s = Stat.load(Stat.NULL_KEY, metadata)
@@ -706,6 +710,8 @@ class Local(object):
         else:
           sql("delete from fssync where path=?", (path,))
         yield path
+    self.rpc.send(None)
+    self.rpc.wait()
 
 
 class Remote(object):
@@ -734,22 +740,30 @@ class Remote(object):
       try:
         method, args, kw = loads(read_rpc(stdin))
       except EOFError:
-        break
-      if method == 'reverse':
-        Local(self.root, args[0], RpcClient(stdin, stdout, args[1]))(
-          *args[2:], **kw)
-        break
+        return
       try:
-        if method == 'print':
-          sys.stdout.buffer.write(*args)
-          continue
-        if isinstance(args[0], bytes):
-          args = (os.path.join(self.root, args[0]),) + args[1:]
-        result = getattr(self, method)(*args, **kw)
+        try:
+          m = getattr(self, method)
+        except AttributeError:
+          if method == 'reverse':
+            break
+          if method == 'print':
+            sys.stdout.buffer.write(*args)
+            continue
+          if method == 'check':
+            result = self._check(stdin, stdout, *args, **kw)
+          else:
+            raise
+        else:
+          if isinstance(args[0], bytes):
+            args = (os.path.join(self.root, args[0]),) + args[1:]
+          result = m(*args, **kw)
       except Exception as e:
         logger.exception('%s(%r)', method, args[0])
         result = e
       write_rpc(stdout, dumps(result))
+    Local(self.root, args[0], RpcClient(stdin, stdout, args[1]))(
+      *args[2:], **kw)
 
   def pwd_grp(self, p, g):
     p = dict((p.get(x.pw_name), x.pw_uid) for x in pwd.getpwall())
@@ -977,36 +991,41 @@ class Remote(object):
     finally:
       os.close(fd)
 
-  def check(self, item_list):
-    path_list = []
+  def _check(self, stdin, stdout):
     inode_map = {}
     inodes = set()
-    for path, inode, metadata in item_list:
-      l = Stat.load(inode, metadata)
-      l.uid = self._pwd(l.uid)
-      l.gid = self._grp(l.gid)
-      if l.acl:
-        l.acl = self.map_acl(l.acl[0]), self.map_acl(l.acl[1])
-      try:
-        s = Stat(os.path.join(self.root, path))
-        key = s.key
-        if inode_map.get(inode) != key if key in inodes else inode in inode_map:
-          metadata = stat.S_IFMT(s.mode)
-        else:
-          inode_map[inode] = key
-          inodes.add(key)
-          metadata = s.value
-      except FileNotFoundError:
-        metadata = None
-      if l.value != metadata:
-        if type(metadata) is tuple:
-          logger.warning("%s: DB %r differs from FS %r",
-                         path, l.value, metadata)
-        else:
-          logger.warning("%s: wrong hardlink" if metadata else "%s: missing",
-                         path)
-        path_list.append((path, metadata))
-    return path_list
+    while True:
+      item_list = loads(read_rpc(stdin))
+      if not item_list:
+        break
+      path_list = []
+      for path, inode, metadata in item_list:
+        l = Stat.load(inode, metadata)
+        l.uid = self._pwd(l.uid)
+        l.gid = self._grp(l.gid)
+        if l.acl:
+          l.acl = self.map_acl(l.acl[0]), self.map_acl(l.acl[1])
+        try:
+          s = Stat(os.path.join(self.root, path))
+          key = s.key
+          if inode_map.get(inode) != key if key in inodes \
+                                         else inode in inode_map:
+            metadata = stat.S_IFMT(s.mode)
+          else:
+            inode_map[inode] = key
+            inodes.add(key)
+            metadata = s.value
+        except FileNotFoundError:
+          metadata = None
+        if l.value != metadata:
+          if type(metadata) is tuple:
+            logger.warning("%s: DB %r differs from FS %r",
+                           path, l.value, metadata)
+          else:
+            logger.warning("%s: wrong hardlink" if metadata else "%s: missing",
+                           path)
+          path_list.append((path, metadata))
+      write_rpc(stdout, dumps(path_list))
 
 class SysLogHandler(logging.handlers.SysLogHandler):
 
