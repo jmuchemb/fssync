@@ -674,7 +674,7 @@ class Local(object):
 
   def check(self, path):
     if path:
-      args = path, path + os.sep, path + chr(ord(os.sep) + 1)
+      args = (path,) + self._minmax(path)
       path = "where path=? or ?<path and path<?"
     else:
       args = ()
