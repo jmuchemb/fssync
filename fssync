@@ -17,6 +17,7 @@
 
 import argparse, errno, grp, logging.handlers, os
 import pwd, re, signal, sqlite3, stat, struct, subprocess, sys, syslog
+from collections import deque
 from contextlib import contextmanager
 from ctypes import CDLL, util as ctypes_util, get_errno, c_long
 from hashlib import md5
@@ -47,7 +48,10 @@ decode, encode = (lambda encoding:
    lambda path: path.encode(encoding))
   )(sys.getfilesystemencoding())
 
-class TODO(Exception): pass
+class INF(object):
+  def __lt__(self, other):
+    return False
+INF = INF()
 
 _format_command_search = re.compile("[[\\s $({?*\\`#~';<>&|]").search
 _format_command_escape = lambda s: "'%s'" % r"'\''".join(s.split("'"))
@@ -678,15 +682,15 @@ class Local(object):
   def check(self, path):
     if path:
       args = (path,) + self._minmax(path)
-      path = "where path=? or ?<path and path<?"
+      where = "where path=? or ?<path and path<?"
     else:
       args = ()
-      path = ""
+      where = ""
     sql = self.con.execute
     fetchone = sql("select path, inode, metadata from fssync "
-                   + path + " order by path", args).fetchone
+                   + where + " order by path", args).fetchone
     s = Stat.__new__(Stat)
-    self.rpc.check()
+    self.rpc.check(path)
     while True:
       row_list = []
       try:
@@ -711,7 +715,17 @@ class Local(object):
           sql("delete from fssync where path=?", (path,))
         yield path
     self.rpc.send(None)
-    self.rpc.wait()
+    ignored = []
+    for path, mode in self.rpc.wait():
+      if not any(path.startswith(p) for p in ignored):
+        s.mode = mode
+        if self.filter(path, s):
+          ignored.append(os.path.join(path, b''))
+        else:
+          logger.info("unexpected %r on destination side: marked for deletion",
+                      path)
+          sql("insert into fssync values (?, ?, ?, 0)",
+              (path, self.NULL_KEY, dumps(s.null_value, 2)))
 
 
 class Remote(object):
@@ -991,9 +1005,46 @@ class Remote(object):
     finally:
       os.close(fd)
 
-  def _check(self, stdin, stdout):
+  def _check(self, stdin, stdout, root):
     inode_map = {}
     inodes = set()
+    untracked = []
+    def walk():
+      join = os.path.join
+      next_dir = []
+      d = [(b'', deque((root,)))]
+      while d:
+        r, names = d.pop()
+        while names:
+          p = names.popleft()
+          path = r + p
+          if next_dir and next_dir[-1] < path:
+            names.appendleft(p)
+            path = next_dir.pop()
+            p = join(self.root, path)
+          else:
+            p = join(self.root, path)
+            s = Stat(p)
+            yield path, s
+            if not stat.S_ISDIR(s.mode):
+              continue
+            path = join(path, b'')
+            if names:
+              next_dir.append(path)
+              continue
+          try:
+            p = os.listdir(p)
+          except PermissionError:
+            if os.path.dirname(path) in (p[0] for p in untracked):
+              continue
+            raise
+          p.sort()
+          d.append((r, names))
+          r = path
+          names = deque(p)
+      yield INF, None
+    walk = walk()
+    p, s = next(walk)
     while True:
       item_list = loads(read_rpc(stdin))
       if not item_list:
@@ -1005,8 +1056,10 @@ class Remote(object):
         l.gid = self._grp(l.gid)
         if l.acl:
           l.acl = self.map_acl(l.acl[0]), self.map_acl(l.acl[1])
-        try:
-          s = Stat(os.path.join(self.root, path))
+        while p < path:
+          untracked.append((p, stat.S_IFMT(s.mode)))
+          p, s = next(walk)
+        if p == path:
           key = s.key
           if inode_map.get(inode) != key if key in inodes \
                                          else inode in inode_map:
@@ -1015,7 +1068,8 @@ class Remote(object):
             inode_map[inode] = key
             inodes.add(key)
             metadata = s.value
-        except FileNotFoundError:
+          p, s = next(walk)
+        else:
           metadata = None
         if l.value != metadata:
           if type(metadata) is tuple:
@@ -1026,6 +1080,11 @@ class Remote(object):
                            path)
           path_list.append((path, metadata))
       write_rpc(stdout, dumps(path_list))
+    while s:
+      untracked.append((p, stat.S_IFMT(s.mode)))
+      p, s = next(walk)
+    return untracked
+
 
 class SysLogHandler(logging.handlers.SysLogHandler):
 
@@ -1076,11 +1135,11 @@ def main():
                    " prevent files from being compressed on Btrfs."),
     _('-c', '--check', action='store_true',
               help="Check that database matches what's on destination side:"
-                   " database is fixed if there's any difference. Note however"
-                   " it does not search for destination inodes that are not"
-                   " in the database. You can then run fssync again without"
-                   " this option to fix errors, optionally with --force."
-                   " -a/-f have no effect with this option."),
+                   " database is fixed if there's any difference. Inodes that"
+                   " are only on destination are marked for removal if they're"
+                   " not filtered (see --filter option). You can then run"
+                   " fssync again without this option to fix errors, optionally"
+                   " with --force. -a has no effect with this option."),
     _('-d', '--db',
               help="File path to database that maintains"
                    " the state of files on the remote side."),
