@@ -1,6 +1,25 @@
 Change History
 ==============
 
+1.4 (2014-09-08)
+----------------
+
+- In v1.3, the --check option was improved to check hardlinks but the
+  implementation was broken: this is now fixed.
+- --check option learned to detect unexpected inodes on destination.
+  Those that are not filtered (by --filter, which is not ignored anymore
+  in this mode) are marked for deletion.
+- --check option failed with an encoding error when paths were specified
+  at command line.
+- A new --force option was added to check data even if metadata don't differ
+  between source and database. With the above improvements to --check, fssync
+  should now be able to recover from any inconsistency between the database
+  and the destination side.
+- fssync now opens regular files for reading without updating the last access
+  time. I don't plan to do the same for directory listing because it's not
+  trivial (and in my opinion, last access time is so useless compared to what
+  it costs that `noatime` should be the default).
+
 1.3 (2014-08-20)
 ----------------
 
