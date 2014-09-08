@@ -4,7 +4,7 @@ Change History
 1.3 (2014-08-20)
 ----------------
 
-This version fixes few bugs related to hardlinks, symlinks and timestamps.
+This version fixes a few bugs related to hardlinks, symlinks and timestamps.
 Unless you only use fssync for regular files and directories, it is advised
 to use --check option.
 
@@ -19,7 +19,7 @@ to use --check option.
   they are, in practice this is wrong because the kernel does not provide any
   way to edit the target without deleting it first. A related bug was that
   modification time of parent directory was not always checked.
-- Itime for regular files
+- A possible case of wrong mtime for regular files has been fixed.
 
 Other changes:
 
