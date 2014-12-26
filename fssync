@@ -463,16 +463,16 @@ class Local(object):
     else:
       r = sql('select * from fssync where path=?', (path,)).fetchall()
       if r:
-        (_, inode, metadata, checked), = r
+        (_, i, metadata, checked), = r
         if checked:
           # We got interrupted and FS changed. We'll sync at a next time.
           return
-        old_key = loads(inode)
+        old_key = loads(i)
         r = Stat.load(old_key, loads(metadata))
         old_fmt = stat.S_IFMT(r.mode)
         if old_key == Stat.NULL_KEY or \
            sql('select path from fssync where inode=? and path!=?',
-               (dumps(old_key, 2), path)).fetchone():
+               (i, path)).fetchone():
           # Remove remote ...
           if self.non_empty(path, r.mode):
             # ... but not directory contents, so delay removal.
@@ -518,7 +518,7 @@ class Local(object):
         if value == x.value and target:
           logger.info("--force: syncing target of %r", path)
       if fmt != old_fmt:
-        # Inode of different type but same number. Mark remote for deletion.
+        # Inode of different type but same number. Mark for deletion.
         sql("update fssync set inode=? where inode=?", (self.NULL_KEY, inode))
         if r:
           # Wow, even the path is the same.
