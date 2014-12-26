@@ -3,7 +3,7 @@ Section: utils
 Priority: extra
 Maintainer: Julien Muchembled <jm@jmuchemb.eu>
 Build-Depends: debhelper (>= 8.0.0), python-docutils
-Standards-Version: 3.9.5
+Standards-Version: 3.9.6
 Homepage: http://jmuchemb.eu/fssync.git
 Vcs-Git: git://jmuchemb.eu/fssync.git
 
