@@ -16,7 +16,7 @@
 # along with this program.  If not, see <http://www.gnu.org/licenses/>.
 
 import argparse, errno, grp, logging.handlers, os
-import pwd, re, signal, sqlite3, stat, struct, subprocess, sys, syslog
+import pwd, shlex, signal, sqlite3, stat, struct, subprocess, sys, syslog
 from collections import deque
 from contextlib import contextmanager
 from ctypes import CDLL, util as ctypes_util, get_errno, c_long
@@ -53,15 +53,8 @@ class INF(object):
     return False
 INF = INF()
 
-_format_command_search = re.compile("[[\\s $({?*\\`#~';<>&|]").search
-_format_command_escape = lambda s: "'%s'" % r"'\''".join(s.split("'"))
 def format_command(*args):
-  cmdline = []
-  for v in args:
-    if _format_command_search(v):
-      v = _format_command_escape(v)
-    cmdline.append(v)
-  return ' '.join(cmdline)
+  return ' '.join(map(shlex.quote, args))
 
 assert not os.O_RDONLY
 
