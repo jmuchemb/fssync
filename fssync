@@ -499,6 +499,7 @@ class Local(object):
         r = s
         same_key_rows = None
     if same_key_rows:
+      assert len({x[2] for x in same_key_rows}) == 1, same_key_rows
       x = Stat.load(key, loads(same_key[2]))
       old_fmt = stat.S_IFMT(x.mode)
       if fmt == stat.S_IFLNK == old_fmt and (value != x.value or self.force):
@@ -652,9 +653,17 @@ class Local(object):
       self.rpc.sync_meta(path, s) # creates the file/dir
       if self.rpc.wait():         # (and parents) automatically
         sync_parent = True
-    # Do not use 'update' because we didn't insert anything if self.rpc is None.
-    sql("insert or replace into fssync values (?, ?, ?, 1)",
-        (path, dumps(key, 2), dumps(value, 2)))
+    sql("begin")
+    try:
+      # Do not use 'update' because we didn't insert anything
+      # if self.rpc is None.
+      sql("insert or replace into fssync values (?, ?, null, 1)", (path, inode))
+      sql("update fssync set metadata=? where inode=?",
+          (dumps(value, 2), inode))
+    except:
+      self.con.rollback()
+      raise
+    self.con.commit()
     return sync_parent
 
   def clean(self, path):

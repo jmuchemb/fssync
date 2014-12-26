@@ -303,7 +303,7 @@ class Test(unittest.TestCase):
     for x in '.', 'a', 'a/a', 'a/c':
       os.utime(x, (1, 1), follow_symlinks=False)
     self.sync()
-    self.assertCalled(link=1, readlink=3, removemany=1, sync_meta=5)
+    self.assertCalled(link=1, readlink=2, removemany=1, sync_meta=4)
 
     self.called.clear()
     self.mkreg('a/b', b'foo')
