@@ -714,7 +714,7 @@ class Local(object):
         elif metadata:
           s.mode = metadata
           sql("update fssync set inode=?, metadata=? where path=?",
-              (self.NULL_KEY, dumps(s.value, 2), path))
+              (self.NULL_KEY, dumps(s.null_value, 2), path))
         else:
           sql("delete from fssync where path=?", (path,))
         yield path
@@ -1057,10 +1057,6 @@ class Remote(object):
       path_list = []
       for path, inode, metadata in item_list:
         l = Stat.load(inode, metadata)
-        l.uid = self._pwd(l.uid)
-        l.gid = self._grp(l.gid)
-        if l.acl:
-          l.acl = self.map_acl(l.acl[0]), self.map_acl(l.acl[1])
         while p < path:
           untracked.append((p, stat.S_IFMT(s.mode)))
           p, s = next(walk)
@@ -1076,6 +1072,13 @@ class Remote(object):
           p, s = next(walk)
         else:
           metadata = None
+        if l.uid is not None:
+          l.uid = self._pwd(l.uid)
+          l.gid = self._grp(l.gid)
+          if l.acl:
+            l.acl = self.map_acl(l.acl[0]), self.map_acl(l.acl[1])
+        elif type(metadata) is tuple:
+          continue # already marked for resync
         if l.value != metadata:
           if type(metadata) is tuple:
             logger.warning("%s: DB %r differs from FS %r",
