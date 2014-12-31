@@ -25,7 +25,7 @@ from pickle import dumps, loads
 from urllib.parse import splitport
 from posix1e import ACL, ACL_USER, ACL_GROUP, delete_default, Entry, Permset
 
-PROTOCOL_VERSION = 2
+PROTOCOL_VERSION = 3
 BLOCK_SIZE = 4096
 PART_SIZE = BLOCK_SIZE * 256
 
@@ -719,17 +719,21 @@ class Local(object):
           sql("delete from fssync where path=?", (path,))
         yield path
     self.rpc.send(None)
+    untracked = []
+    for s, path_list in self.rpc.wait():
+      untracked.extend((p, s) for p in path_list)
+    untracked.sort()
     ignored = []
-    for path, mode in self.rpc.wait():
+    for path, s in untracked:
       if not any(path.startswith(p) for p in ignored):
-        s.mode = mode
+        if type(s) is tuple:
+          s = Stat.load(Stat.NULL_KEY, s)
         if self.filter(path, s):
           ignored.append(os.path.join(path, b''))
         else:
-          logger.info("unexpected %r on destination side: marked for deletion",
-                      path)
+          logger.info("unexpected %r on destination side", path)
           sql("insert into fssync values (?, ?, ?, 0)",
-              (path, self.NULL_KEY, dumps(s.null_value, 2)))
+              (path, dumps(s.key, 2), dumps(s.value, 2)))
 
 
 class Remote(object):
@@ -1013,7 +1017,7 @@ class Remote(object):
   def _check(self, stdin, stdout, root):
     inode_map = {}
     inodes = set()
-    untracked = []
+    untracked = {}
     def walk():
       join = os.path.join
       next_dir = []
@@ -1040,7 +1044,8 @@ class Remote(object):
           try:
             p = os.listdir(p)
           except PermissionError:
-            if os.path.dirname(path) in (p[0] for p in untracked):
+            path = os.path.dirname(path)
+            if any(path in p[1] for p in untracked.values()):
               continue
             raise
           p.sort()
@@ -1058,7 +1063,10 @@ class Remote(object):
       for path, inode, metadata in item_list:
         l = Stat.load(inode, metadata)
         while p < path:
-          untracked.append((p, stat.S_IFMT(s.mode)))
+          try:
+            untracked[s.key][1].append(p)
+          except KeyError:
+            untracked[s.key] = s.value, [p]
           p, s = next(walk)
         if p == path:
           key = s.key
@@ -1091,7 +1099,16 @@ class Remote(object):
     while s:
       untracked.append((p, stat.S_IFMT(s.mode)))
       p, s = next(walk)
-    return untracked
+    r = []
+    if untracked:
+      for inode, key in inode_map.items():
+        try:
+          metadata, p = untracked.pop(key)
+        except KeyError:
+          continue
+        r.append((Stat.load(inode, metadata), p))
+      r += untracked.values()
+    return r
 
 
 class SysLogHandler(logging.handlers.SysLogHandler):

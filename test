@@ -15,7 +15,8 @@
 # You should have received a copy of the GNU General Public License
 # along with this program.  If not, see <http://www.gnu.org/licenses/>.
 
-import errno, logging, os, random, shutil, stat, tempfile, types, unittest
+import errno, logging, os, random, shutil, stat
+import threading, tempfile, types, unittest
 from collections import defaultdict, deque
 fssync = types.ModuleType('fssync')
 exec(compile(open('fssync').read(), os.path.realpath('fssync'), 'exec'),
@@ -108,6 +109,30 @@ class DummyRpcClient(object):
     f = lambda *args, **kw: append((name, args, kw))
     setattr(self, name, f)
     return f
+
+  def check(self, path):
+    o = os.pipe()
+    i = os.pipe()
+    self.stdin = open(i[0], "rb")
+    self.stdout = open(o[1], "wb", 0)
+    def t():
+      with open(o[0], "rb") as stdin, open(i[1], "wb", 0) as stdout:
+        r = self.remote._check(stdin, stdout, path)
+        fssync.write_rpc(stdout, fssync.dumps(r))
+    threading.Thread(target=t, daemon=True).start()
+    self.wait = types.MethodType(fssync.RpcClient.wait, self)
+
+  def send(self, value):
+    fssync.RpcClient.send(self, value)
+    if value is None:
+      self.stdout.close()
+      def wait():
+        try:
+          return fssync.RpcClient.wait(self)
+        finally:
+          self.stdin.close()
+          del self.stdin, self.stdout, self.wait
+      self.wait = wait
 
 
 class Local(fssync.Local):
@@ -337,6 +362,21 @@ class Test(unittest.TestCase):
     del self.fssync.force
     self.assertCalled(check_data=1, readlink=3,
                       remove=1, symlink=1, sync_meta=3)
+
+    self.called.clear()
+    x = self.fssync.remote.root + b'/a/'
+    os.rename(x + b'c', x + b'd')
+    self.sync(synced=False)
+    self.sync(synced=False) # retrying obviously does not help
+    self.assertListEqual([b'a', b'a/c'], list(self.fssync.check(b'')))
+    self.assertListEqual([], list(self.fssync.check(b'')))
+    self.sync()
+    self.assertCalled(link=1, removemany=1, sync_meta=1)
+
+    os.mkdir(x + b'd', 0)
+    self.assertListEqual([b'a'], list(self.fssync.check(b'')))
+    self.sync()
+
 
 if __name__ == '__main__':
   unittest.main()
