@@ -377,6 +377,23 @@ class Test(unittest.TestCase):
     self.assertListEqual([b'a'], list(self.fssync.check(b'')))
     self.sync()
 
+    self.mkreg('a/b')
+    self.sync()
+    with open('a/b', 'wb') as f:
+        f.write(b'foo')
+    try:
+        self.fssync.remote.sync_meta = None
+        self.assertRaises(TypeError, self.sync)
+        self.fssync.remote._close()
+    finally:
+        del self.fssync.remote.sync_meta
+    with open('a/b', 'wb') as f:
+        f.write(b'bar')
+    os.utime('a/b', (1, 1))
+    self.called.clear()
+    self.sync()
+    self.assertCalled(check_data=1, sync_data=1, sync_meta=1)
+
 
 if __name__ == '__main__':
   unittest.main()
