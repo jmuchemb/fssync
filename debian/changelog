@@ -1,3 +1,12 @@
+fssync (1.5-1) unstable; urgency=medium
+
+  * New upstream release (Closes: #774393).
+  * Update Standards-Version to 3.9.6 (no change needed).
+  * Update debian/NEWS to recommend again to upgrade fssync on both sides and
+    to check data.
+
+ -- Julien Muchembled <jm@jmuchemb.eu>  Mon, 09 Feb 2015 20:20:22 +0100
+
 fssync (1.4-1) unstable; urgency=medium
 
   * New upstream release.

@@ -1,4 +1,4 @@
-fssync (1.3-1) unstable; urgency=medium
+fssync (1.5-1) unstable; urgency=medium
 
   Do not forget to upgrade fssync on both sides. Because not doing so could
   lead to weird bugs, fssync now checks that local and remote speak same
@@ -8,4 +8,4 @@ fssync (1.3-1) unstable; urgency=medium
   This version also fixes major bugs so it is advised to check your data.
   See changelog.gz and man page for more information.
 
- -- Julien Muchembled <jm@jmuchemb.eu>  Wed, 20 Aug 2014 13:29:17 +0200
+ -- Julien Muchembled <jm@jmuchemb.eu>  Mon, 09 Feb 2015 20:20:22 +0100

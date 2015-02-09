@@ -1,6 +1,18 @@
 Change History
 ==============
 
+1.5 (2015-02-09)
+----------------
+
+- Several bugs causing the DB to be wrongly updated have been fixed. They are
+  quite severe because could later cause useless resync or corruption, and
+  as usual, it is advised to use --check & --force options if you think you
+  were affected. See messages of commits 45a3425, 5f98a37 & 87bbece for more
+  information.
+- --check option crashed when used several times in a row.
+- --check option learned to detect untracked files that have hardlinks.
+  This required to bump the protocol version.
+
 1.4 (2014-09-08)
 ----------------
 
