@@ -1104,7 +1104,10 @@ class Remote(object):
           path_list.append((path, metadata))
       write_rpc(stdout, dumps(path_list))
     while s:
-      untracked.append((p, stat.S_IFMT(s.mode)))
+      try:
+        untracked[s.key][1].append(p)
+      except KeyError:
+        untracked[s.key] = s.value, [p]
       p, s = next(walk)
     r = []
     if untracked:
