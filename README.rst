@@ -168,6 +168,8 @@ BUGS/LIMITATIONS/TODO
 2. fssync should not trash the page cache by using ``posix_fadvise``\ (2).
    Unfortunately, Linux does not implement ``POSIX_FADV_NOREUSE`` yet (see
    https://lkml.org/lkml/2011/6/24/136 for more information).
+   We could do like Bup_, which uses information returned by ``mincore``\ (2)
+   in order to `eject pages after save more selectively`__.
 
 3. fssync process on remote side might leave parent directories with wrong
    permissions or modification times if it is terminated during specific
@@ -207,6 +209,8 @@ NOTES
 .. target-notes::
 
 .. _Btrfs: https://btrfs.wiki.kernel.org/
+.. _Bup: https://github.com/bup/bup
+.. __: https://github.com/bup/bup/commit/b062252a5bca9b64d7b3034b6fd181424641f61e
 .. _NONE cipher switching: http://www.psc.edu/networking/projects/hpn-ssh/
 .. _csync2: http://oss.linbit.com/csync2/
 .. _rsync: http://rsync.samba.org/
