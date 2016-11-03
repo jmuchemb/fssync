@@ -85,7 +85,7 @@ class Stat(fssync.Stat):
 fssync.Stat = Stat
 
 
-class DummyRpcClient(object):
+class DummyRpcClient:
 
   def __init__(self, remote):
     self.remote = remote

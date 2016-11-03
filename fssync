@@ -48,7 +48,7 @@ decode, encode = (lambda encoding:
    lambda path: path.encode(encoding))
   )(sys.getfilesystemencoding())
 
-class INF(object):
+class INF:
   def __lt__(self, other):
     return False
 INF = INF()
@@ -68,7 +68,7 @@ def check_data(f, size, block_size):
     yield md5(d).digest()
     size -= n
 
-class UTIME_OMIT():
+class UTIME_OMIT:
    def __divmod__(self, other):
      assert other == 1000000000
      return 0, (1 << 30) - 2
@@ -111,7 +111,7 @@ def load_acl(acl):
     Permset(e).add(t & 7)
   return a
 
-class Stat(object):
+class Stat:
   # XXX: Consider splitting mode and moving type from value to key,
   #      in order to simplify code.
 
@@ -170,7 +170,7 @@ class Stat(object):
     return self
 
 
-class RpcClient(object):
+class RpcClient:
 
   def __init__(self, stdin, stdout, map_users=False):
     self.stdin = stdin
@@ -229,7 +229,7 @@ class RpcSshClient(RpcClient):
                                        *args, **kw)
 
 
-class Local(object):
+class Local:
 
   NULL_KEY = dumps(Stat.NULL_KEY, 2)
   NULL_VALUE = dumps(Stat.NULL_VALUE, 2)
@@ -743,7 +743,7 @@ class Local(object):
               (path, dumps(s.key, 2), dumps(s.value, 2)))
 
 
-class Remote(object):
+class Remote:
 
   _open_args = None
   _pwd = _grp = staticmethod(lambda id: id)
