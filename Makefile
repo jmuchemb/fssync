@@ -16,3 +16,6 @@ uninstall:
 
 clean:
 	-rm -f fssync.1
+
+test:
+	./test

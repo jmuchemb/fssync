@@ -2,7 +2,8 @@ Source: fssync
 Section: utils
 Priority: extra
 Maintainer: Julien Muchembled <jm@jmuchemb.eu>
-Build-Depends: debhelper (>= 8.0.0), python-docutils
+# python3-pylibacl is only for dh_auto_test
+Build-Depends: debhelper (>= 8.0.0), python3-docutils, python3-pylibacl (>> 0.5.1-1.1)
 Standards-Version: 3.9.6
 Homepage: http://jmuchemb.eu/fssync.git
 Vcs-Git: git://jmuchemb.eu/fssync.git
