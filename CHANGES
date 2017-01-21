@@ -1,6 +1,12 @@
 Change History
 ==============
 
+1.6 (2017-01-21)
+----------------
+
+- --check option crashed on destination when it has untracked inodes
+  whose paths are greater (alphabetically) than any path on source side.
+
 1.5 (2015-02-09)
 ----------------
 

@@ -1,3 +1,14 @@
+fssync (1.6-1) unstable; urgency=medium
+
+  * New upstream release.
+  * Update Standards-Version to 3.9.8 (no change needed).
+  * Use debhelper 10 (no change).
+  * Unit tests are now run during build, so switch build-depends to python3-*
+    and add python3-pylibacl.
+  * d/copyright: update Copyright: year
+
+ -- Julien Muchembled <jm@jmuchemb.eu>  Sat, 21 Jan 2017 20:59:00 +0100
+
 fssync (1.5-1) unstable; urgency=medium
 
   * New upstream release (Closes: #774393).
