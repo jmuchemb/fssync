@@ -211,6 +211,6 @@ NOTES
 .. _Btrfs: https://btrfs.wiki.kernel.org/
 .. _Bup: https://github.com/bup/bup
 .. __: https://github.com/bup/bup/commit/b062252a5bca9b64d7b3034b6fd181424641f61e
-.. _NONE cipher switching: http://www.psc.edu/networking/projects/hpn-ssh/
+.. _NONE cipher switching: https://github.com/rapier1/openssh-portable
 .. _csync2: http://oss.linbit.com/csync2/
 .. _rsync: http://rsync.samba.org/
