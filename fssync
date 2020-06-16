@@ -196,9 +196,17 @@ class RpcClient:
     else:
       if name == 'sync_meta' and self._map_users:
         # Send our passwd/group database only if remote will need it.
-        send(('pwd_grp', (dict((x.pw_name, x.pw_uid) for x in pwd.getpwall()),
-                          dict((x.gr_name, x.gr_gid) for x in grp.getgrall())),
-                        {}))
+        map_users, map_user, map_group = self._map_users
+        map_users = (
+          {x.pw_name: x.pw_uid for x in pwd.getpwall()},
+          {x.gr_name: x.gr_gid for x in grp.getgrall()},
+          ) if map_users else ({}, {})
+        for x, y in zip(map_users, (map_user, map_group)):
+          if y:
+            for y in y:
+              y, z = y.split('=')
+              x[z] = int(y) if y else None
+        send(('pwd_grp', map_users, {}))
         logger.debug('pwd_grp(...)')
         self.wait()
       def rpc(*args, **kw):
@@ -796,10 +804,15 @@ class Remote:
       *args[2:], **kw)
 
   def pwd_grp(self, p, g):
-    p = dict((p.get(x.pw_name), x.pw_uid) for x in pwd.getpwall())
-    g = dict((g.get(x.gr_name), x.gr_gid) for x in grp.getgrall())
-    p.pop(None, None); self._pwd = p.__getitem__
-    g.pop(None, None); self._grp = g.__getitem__
+    def _(s, d):
+      m = {s[k]: v for k, v in d if k in s}
+      try:
+        default = m.pop(None)
+      except KeyError:
+        return m.__getitem__
+      return lambda k: m.get(k, default)
+    self._pwd = _(p, ((x.pw_name, x.pw_uid) for x in pwd.getpwall()))
+    self._grp = _(g, ((x.gr_name, x.gr_gid) for x in grp.getgrall()))
 
   def map_acl(self, acl):
     return acl and [(t, None if q is None else
@@ -1193,6 +1206,11 @@ def main():
               help="Map uid/gid, including in ACLs, so that names don't change"
                    " between local and remote hosts. This requires remote to"
                    " define all users/groups that may appear locally."),
+    _('-u', '--map-user', action='append', metavar='UID=NAME',
+              help="Map UID, including in ACLs, to NAME on remote side."
+                   " An empty UID matches unknown users."),
+    _('-g', '--map-group', action='append', metavar='GID=NAME',
+              help="Same as -u but for groups."),
     _('-L', '--remote-logfile',
               help="Set '-l' option for remote end."),
     _('-R', '--remote-root',
@@ -1250,12 +1268,15 @@ def main():
       args.remote_root = decode(args.root)
     for a in local_options:
       if a.nargs != 0 and not (getattr(args, a.dest) or a.dest in (
-          'filter', 'remote_logfile')):
+          'filter', 'remote_logfile', 'map_user', 'map_group')):
         parser.error('empty or missing %s argument' %
           ('/'.join(a.option_strings) or a.dest))
     if args.check and args.force:
       parser.error("conflicting options --check and --force")
 
+    map_users = args.map_users, args.map_user, args.map_group
+    if not any(map_users):
+      map_users = None
     if args.host == '-':
       rpc = None
     else:
@@ -1266,13 +1287,13 @@ def main():
         opt.append('-v')
       rpc = RpcSshClient(args.host,
         format_command(args.remote_executable, *opt),
-        args.map_users and not args.reverse)
+        not args.reverse and map_users)
     action = (args.filter, args.path, args.check,
               args.print0, args.allocate, args.force)
     if args.reverse:
       if rpc is None:
         parser.error("conflicting options --reverse and HOST=-")
-      rpc.reverse(args.db, args.map_users, *action)
+      rpc.reverse(args.db, map_users, *action)
       Remote(args.root)(rpc.stdin, rpc.stdout)
     else:
       Local(args.root, args.db, rpc)(*action)

@@ -187,14 +187,7 @@ BUGS/LIMITATIONS/TODO
      least if it was implemented partially.
    - file-system specific properties ?
 
-5. Add 2 options to map specific users or groups. You may want this if you get
-   permission errors and this is certainly a better solution than an option not
-   to preserve ownership. Currently, on destination host, you must either run
-   fssync as root, or configure security so that it is allowed to change
-   ownership with same uid/gid than on source (or with same user/group names if
-   ``--map-users`` option is given).
-
-6. Don't rely on permissions settings to prevent access to inodes on destination
+5. Don't rely on permissions settings to prevent access to inodes on destination
    side. This is because metadata are synchronized after data (in the case of a
    directory, it means all inodes under this directory is synchronized before
    its metadata) and in some cases, an attacker could access to sensitive data
