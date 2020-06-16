@@ -139,6 +139,8 @@ class Stat:
     else:
       a = x.pop('system.posix_acl_access', None) and dump_acl(file=path)
       d = x.pop('system.posix_acl_default', None) and dump_acl(filedef=path)
+      x.pop('security.restorecon_last', None)
+      x.pop('security.selinux', None)
       x.pop('trusted.SGI_ACL_FILE', None)
       x.pop('trusted.SGI_ACL_DEFAULT', None)
     self.acl = (a or d) and (a, d)
