@@ -474,24 +474,25 @@ class Local:
         if old_key == Stat.NULL_KEY or \
            sql('select path from fssync where inode=? and path!=?',
                (i, path)).fetchone():
-          # Remove remote ...
-          if self.non_empty(path, r.mode):
-            # ... but not directory contents, so delay removal.
-            # Even if local inode is a directory, such cleanup is
-            # required in case we want to rename from another path.
-            self.backup(path, True)
-          elif (# ... hardlinks of same type
-                fmt == old_fmt or
-                # and non-directory so that directory can be created.
-                fmt == stat.S_IFDIR):
-            # 1st case of non-reusable inode.
-            # No need to backup because the old inode is either marked for
-            # deletion or reachable via another path.
-            self.remove(path)
-          elif path:
-            # Nothing to do here. It was not a directory and type differs so
-            # it'll be deleted first automatically and we can avoid 1 RPC.
-            logger.debug("let remote remove %r", path)
+          if path:
+            # Remove remote ...
+            if self.non_empty(path, r.mode):
+              # ... but not directory contents, so delay removal.
+              # Even if local inode is a directory, such cleanup is
+              # required in case we want to rename from another path.
+              self.backup(path, True)
+            elif (# ... hardlinks of same type
+                  fmt == old_fmt or
+                  # and non-directory so that directory can be created.
+                  fmt == stat.S_IFDIR):
+              # 1st case of non-reusable inode.
+              # No need to backup because the old inode is either marked for
+              # deletion or reachable via another path.
+              self.remove(path)
+            else:
+              # Nothing to do here. It was not a directory and type differs so
+              # it'll be deleted first automatically and we can avoid 1 RPC.
+              logger.debug("let remote remove %r", path)
         else:
           self.backup(path)
         r = None

@@ -394,6 +394,17 @@ class Test(unittest.TestCase):
     self.sync()
     self.assertCalled(check_data=1, sync_data=1, sync_meta=1)
 
+  def test3(self):
+    self.mkreg('a')
+    self.mkreg('b', mode=0)
+    self.mkreg('c')
+    self.assertRaises(PermissionError, self.fssync.sync, b'')
+    self.assertCalled(sync_meta=1)
+    os.chmod('b', 0o644)
+    self.assertNotSynced()
+    self.sync()
+    self.assertCalled(remove=1, sync_meta=4)
+
 
 if __name__ == '__main__':
   unittest.main()
