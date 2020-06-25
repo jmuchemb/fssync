@@ -453,8 +453,9 @@ class Local:
     sync_parent = False
     value = s.value
     inode = dumps(key, 2)
-    same_key_rows = sql('select * from fssync where inode=?',
-                        (inode,)).fetchall()
+    select_same_key = lambda: sql('select * from fssync where inode=?',
+                                  (inode,)).fetchall()
+    same_key_rows = select_same_key()
     for same_key in same_key_rows:
       if same_key[0] == path:
         if same_key[3]: # checked
@@ -481,6 +482,7 @@ class Local:
               # Even if local inode is a directory, such cleanup is
               # required in case we want to rename from another path.
               self.backup(path, True)
+              same_key_rows = select_same_key()
             elif (# ... hardlinks of same type
                   fmt == old_fmt or
                   # and non-directory so that directory can be created.
@@ -495,6 +497,7 @@ class Local:
               logger.debug("let remote remove %r", path)
         else:
           self.backup(path)
+          same_key_rows = select_same_key()
         r = None
       elif self.rpc is None:
         # Assume remote is already up-to-date.

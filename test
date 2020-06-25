@@ -405,6 +405,35 @@ class Test(unittest.TestCase):
     self.sync()
     self.assertCalled(remove=1, sync_meta=4)
 
+  def test4(self):
+    cls = self.fssync.__class__
+    orig_sync = cls.sync
+    class E(Exception): pass
+    def sync(self, path):
+        if path == b'a/c':
+            raise E
+        return orig_sync(self, path)
+    os.mkdir('a')
+    os.mkdir('a/b')
+    self.mkreg('a/c')
+    try:
+        cls.sync = sync
+        self.assertRaises(E, self.fssync.sync, b'')
+    finally:
+        cls.sync = orig_sync
+    os.rename('a/b', 'b')
+    shutil.rmtree('a')
+    os.rename('b', 'a')
+    self.sync()
+    self.assertCalled(removemany=1, rename=2, sync_meta=2)
+
+    os.mkdir('a/b')
+    self.sync()
+    os.rename('a/b', 'b')
+    os.rmdir('a')
+    os.rename('b', 'a')
+    self.sync()
+    self.assertCalled(removemany=2, rename=4, sync_meta=5)
 
 if __name__ == '__main__':
   unittest.main()
