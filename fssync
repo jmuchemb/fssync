@@ -469,13 +469,13 @@ class Local:
         if checked:
           # We got interrupted and FS changed. We'll sync at a next time.
           return
-        old_key = loads(i)
-        r = Stat.load(old_key, loads(metadata))
-        old_fmt = stat.S_IFMT(r.mode)
-        if old_key == Stat.NULL_KEY or \
-           sql('select path from fssync where inode=? and path!=?',
-               (i, path)).fetchone():
-          if path:
+        if path:
+          old_key = loads(i)
+          r = Stat.load(old_key, loads(metadata))
+          old_fmt = stat.S_IFMT(r.mode)
+          if old_key == Stat.NULL_KEY or \
+             sql('select path from fssync where inode=? and path!=?',
+                 (i, path)).fetchone():
             # Remove remote ...
             if self.non_empty(path, r.mode):
               # ... but not directory contents, so delay removal.
@@ -495,9 +495,9 @@ class Local:
               # Nothing to do here. It was not a directory and type differs so
               # it'll be deleted first automatically and we can avoid 1 RPC.
               logger.debug("let remote remove %r", path)
-        else:
-          self.backup(path)
-          same_key_rows = select_same_key()
+          else:
+            self.backup(path)
+            same_key_rows = select_same_key()
         r = None
       elif self.rpc is None:
         # Assume remote is already up-to-date.

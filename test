@@ -145,7 +145,10 @@ class Local(fssync.Local):
                                 DummyRpcClient(Remote()))
 
   def __del__(self):
-    shutil.rmtree(self.root)
+    try:
+        shutil.rmtree(self.root)
+    except FileNotFoundError:
+        pass
     super(Local, self).__del__()
     Stat.reset_ino()
 
@@ -397,13 +400,22 @@ class Test(unittest.TestCase):
   def test3(self):
     self.mkreg('a')
     self.mkreg('b', mode=0)
-    self.mkreg('c')
+    os.mkdir('c')
     self.assertRaises(PermissionError, self.fssync.sync, b'')
     self.assertCalled(sync_meta=1)
     os.chmod('b', 0o644)
     self.assertNotSynced()
     self.sync()
     self.assertCalled(remove=1, sync_meta=4)
+
+    fssync = self.fssync
+    self.fssync = Local()
+    os.chdir(self.fssync.root)
+    os.rename(fssync.root, b'r')
+    self.fssync.con, fssync.con = fssync.con, self.fssync.con
+    self.fssync.rpc, fssync.rpc = fssync.rpc, self.fssync.rpc
+    self.sync()
+    self.assertCalled(link=2, remove=1, removemany=1, rename=1, sync_meta=6)
 
   def test4(self):
     cls = self.fssync.__class__
