@@ -262,6 +262,7 @@ class Local:
       self.db_key = None if db == ':memory:' else self.stat(db).key
     except KeyError: # db is on another filesystem
       self.db_key = None
+    self.con.execute("PRAGMA journal_mode = TRUNCATE")
     self.con.execute("PRAGMA synchronous = OFF")
     self.con.text_factory = str
     # A row with null metadata means we are renaming/linking/removing a path:
