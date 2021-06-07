@@ -829,12 +829,17 @@ class Remote:
 
   @staticmethod
   @contextmanager
-  def _preserve(path_list, parent=False):
+  def _preserve(paths):
     # XXX: This is the only place where fssync should not be terminated,
     #      or directories may end up with wrong permissions/timestamps.
-    if parent:
-      path_list = frozenset(map(os.path.dirname, path_list))
-    parent_list = []
+    if isinstance(paths, dict):
+      path_list = set(filter(os.path.isdir, paths))
+      path_list.update(map(os.path.dirname, paths))
+      path_list.update(map(os.path.dirname, paths.values()))
+    else:
+      path_list = paths
+      paths = {}
+    restore_list = []
     try:
       for path in path_list:
         try:
@@ -842,12 +847,14 @@ class Remote:
         except FileNotFoundError:
           continue
         mode = None if os.access(path, 2) else stat.S_IMODE(s.st_mode)
-        parent_list.append((path, s.st_mtime_ns, mode))
+        restore_list.append((path, s.st_mtime_ns, mode))
         if mode is not None:
           os.chmod(path, 0o700)
       yield
     finally:
-      for path, mtime_ns, mode in parent_list:
+      for path, mtime_ns, mode in restore_list:
+        if not os.path.exists(path):
+          path = paths[path]
         if mode is not None:
           os.chmod(path, mode)
         os.utime(path, ns=(UTIME_OMIT, mtime_ns), follow_symlinks=False)
@@ -890,7 +897,7 @@ class Remote:
 
   def rename(self, path, new_path):
     new_path = os.path.join(self.root, new_path)
-    with self._preserve((path,), True):
+    with self._preserve({path: new_path}):
       if os.path.lexists(new_path):
         self.remove(new_path)
       else:
@@ -900,7 +907,7 @@ class Remote:
   def rollback(self, path, other):
     if other is not None and self.isdir(path):
       other = os.path.join(self.root, other)
-      with self._preserve((other,), True):
+      with self._preserve({path: other}):
         # If src & dst are the same inode, this is a no-op.
         os.rename(path, other)
     self.remove(path)

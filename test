@@ -447,5 +447,16 @@ class Test(unittest.TestCase):
     self.sync()
     self.assertCalled(removemany=2, rename=4, sync_meta=5)
 
+  def test5(self):
+    os.mkdir('a')
+    os.mkdir('b')
+    os.mkdir('a/x')
+    os.chmod('a/x', 0o555)
+    self.sync()
+    os.chmod('a/x', 0o755)
+    os.rename('a/x', 'b/x')
+    os.chmod('b/x', 0o555)
+    self.sync()
+
 if __name__ == '__main__':
   unittest.main()
