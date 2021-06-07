@@ -130,8 +130,14 @@ class Stat:
       self.blocks = s.st_blocks
       self.blksize = s.st_blksize
     try:
-      x = dict((x, os.getxattr(path, x, follow_symlinks=False))
-               for x in os.listxattr(path, follow_symlinks=False))
+      x = {x: os.getxattr(path, x, follow_symlinks=False)
+           for x in os.listxattr(path, follow_symlinks=False)
+           if x not in (
+             'security.restorecon_last',
+             'security.selinux',
+             'trusted.SGI_ACL_FILE',
+             'trusted.SGI_ACL_DEFAULT',
+           )}
     except (AttributeError, OSError) as e:
       if isinstance(e, OSError) and e.errno != errno.ENOTSUP:
         raise
@@ -139,10 +145,6 @@ class Stat:
     else:
       a = x.pop('system.posix_acl_access', None) and dump_acl(file=path)
       d = x.pop('system.posix_acl_default', None) and dump_acl(filedef=path)
-      x.pop('security.restorecon_last', None)
-      x.pop('security.selinux', None)
-      x.pop('trusted.SGI_ACL_FILE', None)
-      x.pop('trusted.SGI_ACL_DEFAULT', None)
     self.acl = (a or d) and (a, d)
     self.attr = x or None
 
