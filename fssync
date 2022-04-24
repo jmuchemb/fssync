@@ -240,7 +240,7 @@ class RpcSshClient(RpcClient):
         host = x[1:-1] if ipv6 else x
         cmd += '-p', port
     cmd += host, command
-    self._p = subprocess.Popen(cmd, bufsize=1,
+    self._p = subprocess.Popen(cmd,
                                stdin=subprocess.PIPE, stdout=subprocess.PIPE)
     super(RpcSshClient, self).__init__(self._p.stdout, self._p.stdin.raw,
                                        *args, **kw)
