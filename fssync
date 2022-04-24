@@ -22,7 +22,6 @@ from contextlib import contextmanager
 from ctypes import CDLL, util as ctypes_util, get_errno, c_long
 from hashlib import md5
 from pickle import dumps, loads
-from urllib.parse import splitport
 from posix1e import ACL, ACL_USER, ACL_GROUP, delete_default, Entry, Permset
 
 PROTOCOL_VERSION = 3
@@ -231,9 +230,15 @@ class RpcSshClient(RpcClient):
 
   def __init__(self, host, command, *args, **kw):
     cmd = ['ssh']
-    host, port = splitport(host)
-    if port is not None:
-      cmd += '-p', port
+    try:
+      x, port = host.rsplit(':', 1)
+    except ValueError:
+      pass
+    else:
+      ipv6 = x.startswith('[') and x.endswith(']')
+      if ipv6 == (':' in x):
+        host = x[1:-1] if ipv6 else x
+        cmd += '-p', port
     cmd += host, command
     self._p = subprocess.Popen(cmd, bufsize=1,
                                stdin=subprocess.PIPE, stdout=subprocess.PIPE)
