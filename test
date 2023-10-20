@@ -16,8 +16,9 @@
 # along with this program.  If not, see <http://www.gnu.org/licenses/>.
 
 import errno, logging, os, random, shutil, stat
-import threading, tempfile, types, unittest
+import threading, tempfile, time, types, unittest
 from collections import defaultdict, deque
+from contextlib import contextmanager, ExitStack
 fssync = types.ModuleType('fssync')
 exec(compile(open('fssync').read(), os.path.realpath('fssync'), 'exec'),
      fssync.__dict__)
@@ -29,6 +30,48 @@ def setLevel(level=logging.DEBUG):
 #setLevel()  # uncomment to enable all logs
 
 # XXX: http://braawi.org/genbackupdata/ (packaged by Debian) may help.
+
+@contextmanager
+def fix_mtime(d):
+  # WKRD: Force change of mtime because on some setups,
+  #       an operation on the path does not always update it.
+  ns = lambda: os.lstat(d).st_mtime_ns
+  a = ns()
+  yield
+  b = ns()
+  if a == b:
+    os.utime(d, ns=(fssync.UTIME_OMIT, time.time_ns()), follow_symlinks=False)
+    b = ns()
+  # ... Indented because sometimes, it's even decreased.
+    assert a < b, (d, a, b)
+
+@contextmanager
+def fix_parent_mtime(*path):
+  with ExitStack() as stack:
+    for path in {os.path.dirname(path) or os.curdir for path in path}:
+      stack.enter_context(fix_mtime(path))
+    yield
+
+def link(src, dst):
+  with fix_parent_mtime(dst):
+    os.link(src, dst)
+
+def mkdir(path, *args):
+  with fix_parent_mtime(path):
+    os.mkdir(path, *args)
+
+def remove(path):
+  with fix_parent_mtime(path):
+    os.remove(path)
+
+def rename(src, dst):
+  with fix_parent_mtime(src, dst):
+    os.rename(src, dst)
+
+def symlink(src, dst):
+  with fix_parent_mtime(dst):
+    os.symlink(src, dst)
+
 
 class Stat(fssync.Stat):
 
@@ -259,13 +302,13 @@ class Test(unittest.TestCase):
     self.sync()
     self.assertCalled()
 
-    os.rename('a', 'b')
+    rename('a', 'b')
     self.assertNotSynced()
     self.sync()
     self.assertCalled(rename=1, sync_meta=1)
 
     self.called.clear()
-    os.rename('b', 'c')
+    rename('b', 'c')
     Stat.set_ino('c')
     self.sync()
     self.assertEqual(sorted(self.called), ['link', 'removemany',
@@ -291,14 +334,14 @@ class Test(unittest.TestCase):
     self.assertCalled(link=1, removemany=1, sync_meta=1)
 
     self.called.clear()
-    os.link('c', 'd')
+    link('c', 'd')
     self.fssync.remote.removemany([b'b/c'])
     self.sync(synced=False)
     self.sync()
     self.assertCalled(link=3, sync_meta=2)
 
     self.called.clear()
-    os.rename('b', 'a')
+    rename('b', 'a')
     shutil.rmtree(self.fssync.remote.root + b'/b')
     self.sync()
     self.assertCalled(link=1, rename=1, sync_meta=2)
@@ -308,7 +351,7 @@ class Test(unittest.TestCase):
 
     self.called.clear()
     for x in 'a/c', 'c', 'd':
-      os.remove(x)
+      remove(x)
     os.symlink('.', 'c')
     os.link('c', 'd')
     Stat.set_ino('c', i)
@@ -316,12 +359,13 @@ class Test(unittest.TestCase):
     self.assertCalled(link=1, remove=1, removemany=1, symlink=1, sync_meta=3)
 
     self.called.clear()
-    os.remove('c')
-    os.remove('d')
-    os.symlink('..', 'c')
-    os.link('c', 'd')
+    with fix_mtime('.'):
+      os.remove('c')
+      os.remove('d')
+      os.symlink('..', 'c')
+      os.link('c', 'd')
     Stat.set_ino('c', i)
-    os.symlink('.', 'a/a')
+    symlink('.', 'a/a')
     i = Stat.set_ino('a/a')
     self.sync()
     self.assertCalled(link=1, readlink=1, remove=2, symlink=2, sync_meta=4)
@@ -354,8 +398,9 @@ class Test(unittest.TestCase):
     self.assertCalled(check_data=1, readlink=3, sync_data=1, sync_meta=1)
 
     # ... and symlinks
-    os.remove('a/a')
-    os.symlink('b', 'a/a')
+    with fix_mtime('a'):
+      os.remove('a/a')
+      os.symlink('b', 'a/a')
     os.utime('a/a', (1, 1), follow_symlinks=False)
     Stat.set_ino('a/a', i)
     self.sync(synced=False)
@@ -368,7 +413,7 @@ class Test(unittest.TestCase):
 
     self.called.clear()
     x = self.fssync.remote.root + b'/a/'
-    os.rename(x + b'c', x + b'd')
+    rename(x + b'c', x + b'd')
     self.sync(synced=False)
     self.sync(synced=False) # retrying obviously does not help
     self.assertListEqual([b'a', b'a/c'], list(self.fssync.check(b'')))
@@ -376,7 +421,7 @@ class Test(unittest.TestCase):
     self.sync()
     self.assertCalled(link=1, removemany=1, sync_meta=1)
 
-    os.mkdir(x + b'd', 0)
+    mkdir(x + b'd', 0)
     self.assertListEqual([b'a'], list(self.fssync.check(b'')))
     self.sync()
 
@@ -433,17 +478,19 @@ class Test(unittest.TestCase):
         self.assertRaises(E, self.fssync.sync, b'')
     finally:
         cls.sync = orig_sync
-    os.rename('a/b', 'b')
-    shutil.rmtree('a')
-    os.rename('b', 'a')
+    with fix_mtime('.'):
+      os.rename('a/b', 'b')
+      shutil.rmtree('a')
+      os.rename('b', 'a')
     self.sync()
     self.assertCalled(removemany=1, rename=2, sync_meta=2)
 
     os.mkdir('a/b')
     self.sync()
-    os.rename('a/b', 'b')
-    os.rmdir('a')
-    os.rename('b', 'a')
+    with fix_mtime('.'):
+      os.rename('a/b', 'b')
+      os.rmdir('a')
+      os.rename('b', 'a')
     self.sync()
     self.assertCalled(removemany=2, rename=4, sync_meta=5)
 
