@@ -2,16 +2,16 @@
 # -*- makefile -*-
 #export DH_VERBOSE=1
 
-PKD  = $(abspath $(dir $(MAKEFILE_LIST)))
-PKG  = $(word 2, $(shell dpkg-parsechangelog -l$(PKD)/changelog))
-UVER = $(shell dpkg-parsechangelog -l$(PKD)/changelog | \
-               sed -nr 's/^Version: (.*:)?(.*)-(.*)/\2/p')
+PKD := $(abspath $(dir $(MAKEFILE_LIST)))
+
+include /usr/share/dpkg/pkg-info.mk
 
 .PHONY: get-orig-source
-get-orig-source: $(PKG)_$(UVER).orig.tar.xz
-$(PKG)_$(UVER).orig.tar.xz:
-	set $(PKG)-$(UVER)/; (cd $(PKD)/.. && git archive --format=tar \
-	--prefix=$$1 HEAD) | tar --delete $$1debian/ $$1.gitignore | xz > $@
+get-orig-source: $(DEB_SOURCE)_$(DEB_VERSION_UPSTREAM).orig.tar.xz
+$(DEB_SOURCE)_$(DEB_VERSION_UPSTREAM).orig.tar.xz:
+	set $(DEB_SOURCE)-$(DEB_VERSION_UPSTREAM)/; (cd $(PKD)/.. && \
+	git archive --format=tar --prefix=$$1 HEAD) | \
+	tar --delete $$1debian/ $$1.gitignore | xz > $@
 
 %:
 	dh $@
