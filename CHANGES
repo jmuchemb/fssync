@@ -1,6 +1,20 @@
 Change History
 ==============
 
+1.7 (2023-10-21)
+----------------
+
+- New -u/-g options.
+- Fix resuming during initial sync.
+- "missing ... on destination side" could happen for wrong reasons.
+- Do not attempt to move/replace root folder.
+- Accept symlink (to directory) for root path.
+- Ignore some extended attributes that were found on Android.
+- Really ignore trusted.SGI_ACL_{FILE,DEFAULT} extended attributes.
+- Fix move of read-only directory.
+- Speed up database journaling.
+- Fix command-line parsing of HOST when it's [ipv6]:port.
+
 1.6 (2017-01-21)
 ----------------
 

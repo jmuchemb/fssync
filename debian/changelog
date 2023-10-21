@@ -1,3 +1,20 @@
+fssync (1.7-1) unstable; urgency=medium
+
+  * New upstream release.
+    - The test suite does not fail randomly anymore (Closes: #858253).
+  * Update Standards-Version to 4.6.2:
+    - d/copyright: update format URL to https form
+    - priority-extra-is-replaced-by-priority-optional
+  * Use debhelper 13:
+    - replace d/compat with a debhelper-compat build-dep.
+  * Update Homepage.
+  * Other fixes:
+    - custom-compression-in-debian-source-options
+    - debian-rules-parses-dpkg-parsechangelog
+    - silent-on-rules-requiring-root (root not required)
+
+ -- Julien Muchembled <jm@jmuchemb.eu>  Sun, 22 Oct 2023 01:39:34 +0200
+
 fssync (1.6-1) unstable; urgency=medium
 
   * New upstream release.
